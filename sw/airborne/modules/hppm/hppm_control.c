@@ -1,0 +1,601 @@
+#include "hppm_control.h"
+#include "state.h" 
+#include "modules/guidance/gvf/gvf.h" 
+#include "modules/nav/waypoints.h"
+#include "generated/flight_plan.h"
+#include "firmwares/rover/guidance/rover_guidance.h" 
+#include "modules/datalink/datalink.h"
+#include "generated/modules.h"
+#include "modules/datalink/downlink.h"
+#include "firmwares/rover/navigation.h"
+#include <math.h> 
+#include <stdio.h>
+#include <string.h>
+#include "modules/multi/traffic_info.h"
+
+EntornoNavegacion hppm_entorno;
+EstadoRobot hppm_robot;
+AdministradorMision hppm_mision; 
+TrayectoriaSegura hppm_buffer_trayectoria; 
+
+double historial_ruta_buffer[VENTANA_ESTANCAMIENTO + 1][3];
+double ultimos_centros[3][3];
+
+void hppm_init(void) {
+    memset(&hppm_entorno, 0, sizeof(EntornoNavegacion));
+    memset(&hppm_robot, 0, sizeof(EstadoRobot));
+    memset(&hppm_buffer_trayectoria, 0, sizeof(TrayectoriaSegura));
+    hppm_entorno.num_obstaculos = 1;
+    hppm_entorno.matriz_obstaculos[0][0] = 9999.0;
+    hppm_entorno.matriz_obstaculos[0][1] = 9999.0;
+    hppm_entorno.matriz_obstaculos[0][2] = 0.1;
+    hppm_entorno.matriz_obstaculos[0][3] = 0.001;
+}
+
+static void invertir_matriz_jacobiana(double J[3][3], double J_inv[3][3]) {
+    double cofactor_00 = J[1][1]*J[2][2] - J[1][2]*J[2][1];
+    double cofactor_01 = J[1][0]*J[2][2] - J[1][2]*J[2][0];
+    double cofactor_02 = J[1][0]*J[2][1] - J[1][1]*J[2][0];
+    double determinante = J[0][0]*cofactor_00 - J[0][1]*cofactor_01 + J[0][2]*cofactor_02;
+    double inv_determinante = (fabs(determinante) < LIMITE_CERO_MATRIZ) ? 0.0 : 1.0 / determinante;
+    J_inv[0][0] =  cofactor_00 * inv_determinante;
+    J_inv[1][0] = -cofactor_01 * inv_determinante;
+    J_inv[2][0] =  cofactor_02 * inv_determinante;
+    J_inv[0][1] = -(J[0][1]*J[2][2] - J[0][2]*J[2][1]) * inv_determinante;
+    J_inv[1][1] =  (J[0][0]*J[2][2] - J[0][2]*J[2][0]) * inv_determinante;
+    J_inv[2][1] = -(J[0][0]*J[2][1] - J[0][1]*J[2][0]) * inv_determinante;
+    J_inv[0][2] =  (J[0][1]*J[1][2] - J[0][2]*J[1][1]) * inv_determinante;
+    J_inv[1][2] = -(J[0][0]*J[1][2] - J[0][2]*J[1][0]) * inv_determinante;
+    J_inv[2][2] =  (J[0][0]*J[1][1] - J[0][1]*J[1][0]) * inv_determinante;
+}
+
+static void evaluar_entorno_y_errores(EntornoNavegacion *entorno, EstadoRobot *robot, int calcular_errores_f) {
+    double sumatoria_repulsion_x = 0.0, sumatoria_repulsion_y = 0.0, sumatoria_energia_W = 0.0;
+    for(int k = 0; k < entorno->num_obstaculos; k++) {
+        double delta_x = robot->x - entorno->matriz_obstaculos[k][0];
+        double delta_y = robot->y - entorno->matriz_obstaculos[k][1];
+        double distancia_cuadrada = (delta_x * delta_x) + (delta_y * delta_y);
+        double radio_cuadrado = entorno->matriz_obstaculos[k][2]; 
+        if (radio_cuadrado < 0.01) radio_cuadrado = 0.01; 
+        double peso_neto = entorno->matriz_obstaculos[k][3]; 
+        double energia_gaussiana = peso_neto * exp(-distancia_cuadrada / radio_cuadrado);
+        double factor_fuerza = -energia_gaussiana / radio_cuadrado;
+        sumatoria_repulsion_x += (factor_fuerza * (2.0 * delta_x)); 
+        sumatoria_repulsion_y += (factor_fuerza * (2.0 * delta_y));
+        if(calcular_errores_f) { sumatoria_energia_W += energia_gaussiana; }
+    }
+    robot->jacobiano[0][0] = -entorno->pendiente_inicial; 
+    robot->jacobiano[0][1] = -1.0; 
+    robot->jacobiano[0][2] = -entorno->inicio_y - entorno->pendiente_inicial * entorno->inicio_x + entorno->pendiente_inicial * entorno->meta_x + entorno->meta_y;
+    robot->jacobiano[1][0] = -entorno->pendiente_final + sumatoria_repulsion_x; 
+    robot->jacobiano[1][1] = -1.0 + sumatoria_repulsion_y;
+    robot->jacobiano[1][2] = -entorno->inicio_y - entorno->pendiente_final*entorno->inicio_x + entorno->meta_y + entorno->pendiente_final*entorno->meta_x + robot->energia_acumulada_inicio - robot->energia_acumulada_meta;
+    robot->jacobiano[2][0] = 2.0 * (robot->x - robot->centro_x); 
+    robot->jacobiano[2][1] = 2.0 * (robot->y - robot->centro_y);
+    robot->jacobiano[2][2] = 2.0 * (robot->L - robot->centro_L);
+    if (calcular_errores_f) {
+        double constante_H1 = -entorno->inicio_y - entorno->pendiente_inicial*entorno->inicio_x + entorno->pendiente_inicial*entorno->meta_x + entorno->meta_y;
+        double constante_H2 = -entorno->inicio_y - entorno->pendiente_final*entorno->inicio_x + (entorno->meta_y + entorno->pendiente_final*entorno->meta_x) + sumatoria_energia_W - robot->energia_acumulada_meta;
+        robot->error_funcion[0][0] = -robot->y - entorno->pendiente_inicial*robot->x + entorno->pendiente_inicial*entorno->meta_x + entorno->meta_y - (1.0 - robot->L)*constante_H1;
+        robot->error_funcion[1][0] = (-robot->y - entorno->pendiente_final*robot->x + (entorno->meta_y + entorno->pendiente_final*entorno->meta_x) + sumatoria_energia_W - robot->energia_acumulada_meta) - (1.0 - robot->L)*constante_H2;
+        double distancia_centro_x = robot->x - robot->centro_x;
+        double distancia_centro_y = robot->y - robot->centro_y;
+        double distancia_centro_L = robot->L - robot->centro_L;
+        robot->error_funcion[2][0] = (distancia_centro_x * distancia_centro_x) + (distancia_centro_y * distancia_centro_y) + (distancia_centro_L * distancia_centro_L) - (robot->radio_actual * robot->radio_actual);
+    }
+}
+
+static void hppm_actualizar_energias(void) {
+    hppm_robot.energia_acumulada_inicio = 0.0;
+    hppm_robot.energia_acumulada_meta = 0.0;
+    for(int k = 0; k < hppm_entorno.num_obstaculos; k++) {
+        double radio_cuadrado = hppm_entorno.matriz_obstaculos[k][2];
+        if (radio_cuadrado < 0.01) radio_cuadrado = 0.01;
+        double peso_neto = hppm_entorno.matriz_obstaculos[k][3];
+        double delta_x_ini = hppm_entorno.inicio_x - hppm_entorno.matriz_obstaculos[k][0];
+        double delta_y_ini = hppm_entorno.inicio_y - hppm_entorno.matriz_obstaculos[k][1];
+        double dist_cuadrada_ini = (delta_x_ini * delta_x_ini) + (delta_y_ini * delta_y_ini);
+        hppm_robot.energia_acumulada_inicio += peso_neto * exp(-dist_cuadrada_ini / radio_cuadrado);
+        double delta_x_meta = hppm_entorno.meta_x - hppm_entorno.matriz_obstaculos[k][0];
+        double delta_y_meta = hppm_entorno.meta_y - hppm_entorno.matriz_obstaculos[k][1];
+        double dist_cuadrada_meta = (delta_x_meta * delta_x_meta) + (delta_y_meta * delta_y_meta);
+        hppm_robot.energia_acumulada_meta += peso_neto * exp(-dist_cuadrada_meta / radio_cuadrado);
+    }
+}
+
+static void hppm_periodic_step(void) {
+    hppm_actualizar_energias();
+    if (hppm_robot.contador_pasos <= 1) {
+        hppm_robot.L = 0.0;
+        hppm_robot.L_anterior = 0.0;
+    } else {
+        hppm_robot.x_anterior = hppm_robot.paso_corregido[0][0];
+        hppm_robot.y_anterior = hppm_robot.paso_corregido[1][0];
+    }
+    hppm_robot.centro_x = hppm_robot.x_anterior;
+    hppm_robot.centro_y = hppm_robot.y_anterior;
+    hppm_robot.centro_L = hppm_robot.L_anterior;
+    evaluar_entorno_y_errores(&hppm_entorno, &hppm_robot, FALSO); 
+    
+    double vtx = hppm_robot.jacobiano[0][2]*hppm_robot.jacobiano[1][1] - hppm_robot.jacobiano[1][2]*hppm_robot.jacobiano[0][1];
+    double vty = hppm_robot.jacobiano[1][2]*hppm_robot.jacobiano[0][0] - hppm_robot.jacobiano[0][2]*hppm_robot.jacobiano[1][0];
+    double vtL = -(hppm_robot.jacobiano[0][0]*hppm_robot.jacobiano[1][1] - hppm_robot.jacobiano[0][1]*hppm_robot.jacobiano[1][0]);
+    
+    double norma = sqrt((vtx*vtx) + (vty*vty) + (vtL*vtL));
+    if (norma < LIMITE_CERO_NORMA) norma = LIMITE_CERO_NORMA;
+    
+    hppm_robot.direccion_x = vtx / norma; 
+    hppm_robot.direccion_y = vty / norma; 
+    hppm_robot.direccion_L = vtL / norma;
+    int signo = (hppm_entorno.pendiente_inicial > hppm_entorno.pendiente_final) ? -1 : 1; 
+
+    hppm_robot.paso_predicho[0][0] = hppm_robot.x_anterior + signo*(hppm_robot.radio_actual * hppm_robot.direccion_x);
+    hppm_robot.paso_predicho[1][0] = hppm_robot.y_anterior + signo*(hppm_robot.radio_actual * hppm_robot.direccion_y);
+    hppm_robot.paso_predicho[2][0] = hppm_robot.L_anterior + signo*(hppm_robot.radio_actual * hppm_robot.direccion_L);
+    hppm_robot.determinante_anterior = vtL;
+
+    hppm_robot.x = hppm_robot.paso_predicho[0][0]; 
+    hppm_robot.y = hppm_robot.paso_predicho[1][0]; 
+    hppm_robot.L = hppm_robot.paso_predicho[2][0];
+    
+    memcpy(&ultimos_centros[0][0], &ultimos_centros[1][0], 3 * sizeof(double));
+    memcpy(&ultimos_centros[1][0], &ultimos_centros[2][0], 3 * sizeof(double));
+    ultimos_centros[2][0] = hppm_robot.centro_x; 
+    ultimos_centros[2][1] = hppm_robot.centro_y; 
+    ultimos_centros[2][2] = hppm_robot.centro_L;
+
+    int iteraciones = 0; 
+    double error_cuadrado = 1.0;
+    double res_x = hppm_robot.x_anterior, res_y = hppm_robot.y_anterior, res_L = hppm_robot.L_anterior;
+    
+    while (iteraciones < MAX_ITERACIONES_NEWTON) {
+        evaluar_entorno_y_errores(&hppm_entorno, &hppm_robot, VERDADERO); 
+        error_cuadrado = (hppm_robot.error_funcion[0][0]*hppm_robot.error_funcion[0][0]) + 
+                         (hppm_robot.error_funcion[1][0]*hppm_robot.error_funcion[1][0]) + 
+                         (hppm_robot.error_funcion[2][0]*hppm_robot.error_funcion[2][0]);
+                         
+        if (error_cuadrado <= TOLERANCIA_ERROR_F_CUADRADO) break;
+
+        hppm_robot.jacobiano[0][0] += FACTOR_AMORTIGUACION;
+        hppm_robot.jacobiano[1][1] += FACTOR_AMORTIGUACION;
+        hppm_robot.jacobiano[2][2] += FACTOR_AMORTIGUACION;
+        invertir_matriz_jacobiana(hppm_robot.jacobiano, hppm_robot.jacobiano_inverso);
+        
+        double aj_x = (hppm_robot.jacobiano_inverso[0][0]*hppm_robot.error_funcion[0][0] + hppm_robot.jacobiano_inverso[0][1]*hppm_robot.error_funcion[1][0] + hppm_robot.jacobiano_inverso[0][2]*hppm_robot.error_funcion[2][0]);
+        double aj_y = (hppm_robot.jacobiano_inverso[1][0]*hppm_robot.error_funcion[0][0] + hppm_robot.jacobiano_inverso[1][1]*hppm_robot.error_funcion[1][0] + hppm_robot.jacobiano_inverso[1][2]*hppm_robot.error_funcion[2][0]);
+        double aj_L = (hppm_robot.jacobiano_inverso[2][0]*hppm_robot.error_funcion[0][0] + hppm_robot.jacobiano_inverso[2][1]*hppm_robot.error_funcion[1][0] + hppm_robot.jacobiano_inverso[2][2]*hppm_robot.error_funcion[2][0]);
+        
+        hppm_robot.x -= aj_x; hppm_robot.y -= aj_y; hppm_robot.L -= aj_L;
+        iteraciones++;
+    }
+
+    if (error_cuadrado > TOLERANCIA_ERROR_F_CUADRADO) {
+        hppm_robot.radio_actual /= 2.0;
+        if (hppm_robot.radio_actual < 0.005) {
+            hppm_robot.L += 0.02; 
+            hppm_robot.radio_actual = hppm_entorno.radio_esfera_paso;
+            hppm_robot.x = hppm_robot.paso_predicho[0][0];
+            hppm_robot.y = hppm_robot.paso_predicho[1][0];
+            hppm_robot.paso_corregido[0][0] = hppm_robot.x;
+            hppm_robot.paso_corregido[1][0] = hppm_robot.y;
+            hppm_robot.x_anterior = hppm_robot.x;
+            hppm_robot.y_anterior = hppm_robot.y;
+            hppm_robot.L_anterior = hppm_robot.L;
+            hppm_robot.contador_pasos++;
+        } else {
+            hppm_robot.x_anterior = res_x; hppm_robot.y_anterior = res_y; hppm_robot.L_anterior = res_L;
+        }
+        return; 
+    }
+    hppm_robot.paso_corregido[0][0] = hppm_robot.x;
+    hppm_robot.paso_corregido[1][0] = hppm_robot.y;
+    hppm_robot.L_anterior = hppm_robot.L; 
+    hppm_robot.contador_pasos++;
+}
+
+static void hppm_calcular_ruta_completa(void) {
+    hppm_buffer_trayectoria.cantidad_puntos = 0;
+    hppm_buffer_trayectoria.indice_actual = 0;
+    hppm_buffer_trayectoria.recalculando = FALSO;
+    int max_intentos = MAX_PUNTOS_TRAYECTORIA * 5; 
+    
+    while (hppm_robot.L < 1.0 && max_intentos > 0) {
+        hppm_periodic_step();
+        if (isnan(hppm_robot.paso_corregido[0][0]) || isnan(hppm_robot.paso_corregido[1][0])) break; 
+        double dist_prev = 999.0;
+        if (hppm_buffer_trayectoria.cantidad_puntos > 0) {
+            int last_idx = hppm_buffer_trayectoria.cantidad_puntos - 1;
+            double dx = hppm_robot.paso_corregido[0][0] - hppm_buffer_trayectoria.x[last_idx];
+            double dy = hppm_robot.paso_corregido[1][0] - hppm_buffer_trayectoria.y[last_idx];
+            dist_prev = sqrt(dx*dx + dy*dy);
+        }
+        
+        if (dist_prev > 0.001) { 
+            int idx = hppm_buffer_trayectoria.cantidad_puntos;
+            hppm_buffer_trayectoria.x[idx] = hppm_robot.paso_corregido[0][0];
+            hppm_buffer_trayectoria.y[idx] = hppm_robot.paso_corregido[1][0];
+            hppm_buffer_trayectoria.L_anterior = hppm_robot.L;
+            hppm_buffer_trayectoria.cantidad_puntos++;
+            if (hppm_buffer_trayectoria.cantidad_puntos >= MAX_PUNTOS_TRAYECTORIA) break;
+        }
+        max_intentos--;
+    }
+}
+
+void hppm_clear_obstacles(void) { 
+    hppm_entorno.num_obstaculos = 0; 
+    for (int k = 0; k < MAX_OBSTACULOS; k++) {
+        hppm_entorno.matriz_obstaculos[k][0] = 999.0;
+        hppm_entorno.matriz_obstaculos[k][1] = 999.0;
+        hppm_entorno.matriz_obstaculos[k][2] = 0.1;
+        hppm_entorno.matriz_obstaculos[k][3] = 0.0;
+    }
+    #ifdef WP_OBS0
+    waypoint_move_xy_i(WP_OBS0, (int32_t)(999.0f * 256.0f), (int32_t)(999.0f * 256.0f));
+    #endif
+    #ifdef WP_OBS1
+    waypoint_move_xy_i(WP_OBS1, (int32_t)(999.0f * 256.0f), (int32_t)(999.0f * 256.0f));
+    #endif
+    #ifdef WP_OBS2
+    waypoint_move_xy_i(WP_OBS2, (int32_t)(999.0f * 256.0f), (int32_t)(999.0f * 256.0f));
+    #endif
+    #ifdef WP_OBS3
+    waypoint_move_xy_i(WP_OBS3, (int32_t)(999.0f * 256.0f), (int32_t)(999.0f * 256.0f));
+    #endif
+    #ifdef WP_OBS4
+    waypoint_move_xy_i(WP_OBS4, (int32_t)(999.0f * 256.0f), (int32_t)(999.0f * 256.0f));
+    #endif
+    #ifdef WP_OBS5
+    waypoint_move_xy_i(WP_OBS5, (int32_t)(999.0f * 256.0f), (int32_t)(999.0f * 256.0f));
+    #endif
+    #ifdef WP_OBS6
+    waypoint_move_xy_i(WP_OBS6, (int32_t)(999.0f * 256.0f), (int32_t)(999.0f * 256.0f));
+    #endif
+    #ifdef WP_OBS7
+    waypoint_move_xy_i(WP_OBS7, (int32_t)(999.0f * 256.0f), (int32_t)(999.0f * 256.0f));
+    #endif
+}
+
+void hppm_ruta_limpiar(void) {
+    hppm_mision.total_puntos = 0;
+    hppm_mision.punto_actual = 0;
+    hppm_clear_obstacles(); 
+    
+    waypoint_move_xy_i(WP_L0, (int32_t)(999.0f * 256.0f), (int32_t)(999.0f * 256.0f));
+    waypoint_move_xy_i(WP_L1, (int32_t)(999.0f * 256.0f), (int32_t)(999.0f * 256.0f));
+    waypoint_move_xy_i(WP_L2, (int32_t)(999.0f * 256.0f), (int32_t)(999.0f * 256.0f));
+    #ifdef WP_L3
+    waypoint_move_xy_i(WP_L3, (int32_t)(999.0f * 256.0f), (int32_t)(999.0f * 256.0f));
+    #endif
+    #ifdef WP_L4
+    waypoint_move_xy_i(WP_L4, (int32_t)(999.0f * 256.0f), (int32_t)(999.0f * 256.0f));
+    #endif
+    #ifdef WP_L5
+    waypoint_move_xy_i(WP_L5, (int32_t)(999.0f * 256.0f), (int32_t)(999.0f * 256.0f));
+    #endif
+    #ifdef WP_L6
+    waypoint_move_xy_i(WP_L6, (int32_t)(999.0f * 256.0f), (int32_t)(999.0f * 256.0f));
+    #endif
+    #ifdef WP_L7
+    waypoint_move_xy_i(WP_L7, (int32_t)(999.0f * 256.0f), (int32_t)(999.0f * 256.0f));
+    #endif
+    #ifdef WP_L8
+    waypoint_move_xy_i(WP_L8, (int32_t)(999.0f * 256.0f), (int32_t)(999.0f * 256.0f));
+    #endif
+} 
+
+void hppm_mover_wp(uint8_t wp_id, float x, float y) {
+    waypoint_move_xy_i(wp_id, (int32_t)(x * 256.0f), (int32_t)(y * 256.0f));
+}
+
+void hppm_ruta_add_wp(uint8_t wp_id) {
+    if (hppm_mision.total_puntos < 20) {
+        hppm_mision.waypoints[hppm_mision.total_puntos] = wp_id;
+        hppm_mision.total_puntos++;
+    }
+}
+
+void hppm_ruta_iniciar(void) {
+    if (hppm_mision.total_puntos > 0) {
+        hppm_mision.punto_actual = 0;
+        hppm_route_start(hppm_mision.waypoints[hppm_mision.punto_actual]);
+    }
+}
+
+void hppm_route_start(uint8_t wp_meta) {
+    memset(&hppm_robot, 0, sizeof(EstadoRobot));
+    hppm_entorno.radio_esfera_paso = 0.15; 
+    struct EnuCoor_f *pos_actual = stateGetPositionEnu_f();
+    hppm_entorno.inicio_x = pos_actual->x; hppm_entorno.inicio_y = pos_actual->y;
+    hppm_entorno.meta_x = WaypointX(wp_meta); hppm_entorno.meta_y = WaypointY(wp_meta);
+
+    double dx = hppm_entorno.meta_x - hppm_entorno.inicio_x;
+    double dy = hppm_entorno.meta_y - hppm_entorno.inicio_y;
+    if (fabs(dx) < 1e-6) dx = (dx < 0.0) ? -1e-6 : 1e-6;
+    double angulo = atan2(dy, dx);
+    hppm_entorno.pendiente_inicial = tan(angulo + (M_PI / 4.0));
+    hppm_entorno.pendiente_final = tan(angulo - (M_PI / 4.0));
+    
+    hppm_robot.x = hppm_entorno.inicio_x; hppm_robot.y = hppm_entorno.inicio_y;
+    hppm_robot.x_anterior = hppm_entorno.inicio_x; hppm_robot.y_anterior = hppm_entorno.inicio_y;
+    hppm_robot.L = 0.0; hppm_robot.L_anterior = 0.0;
+    hppm_robot.contador_pasos = 1;
+    hppm_robot.radio_actual = hppm_entorno.radio_esfera_paso;
+    hppm_robot.centro_x = hppm_robot.x_anterior; 
+    hppm_robot.centro_y = hppm_robot.y_anterior; 
+    hppm_robot.centro_L = hppm_robot.L_anterior; 
+    hppm_buffer_trayectoria.L_anterior = -1.0;
+    hppm_buffer_trayectoria.recalculando = VERDADERO; 
+}
+
+// Sincroniza ÚNICAMENTE obstáculos estáticos del GCS (0 a 3) para no colisionar con aliados dinámicos (4 a 7)
+static void hppm_sincronizar_interfaz(void) {
+    bool cambio_detectado = FALSO;
+
+    for (int i = 0; i < 4; i++) {
+        float wp_x = hppm_entorno.matriz_obstaculos[i][0];
+        float wp_y = hppm_entorno.matriz_obstaculos[i][1];
+
+        #ifdef WP_OBS0
+        if (i == 0) { wp_x = WaypointX(WP_OBS0); wp_y = WaypointY(WP_OBS0); }
+        #endif
+        #ifdef WP_OBS1
+        if (i == 1) { wp_x = WaypointX(WP_OBS1); wp_y = WaypointY(WP_OBS1); }
+        #endif
+        #ifdef WP_OBS2
+        if (i == 2) { wp_x = WaypointX(WP_OBS2); wp_y = WaypointY(WP_OBS2); }
+        #endif
+        #ifdef WP_OBS3
+        if (i == 3) { wp_x = WaypointX(WP_OBS3); wp_y = WaypointY(WP_OBS3); }
+        #endif
+
+        float int_x = hppm_entorno.matriz_obstaculos[i][0];
+        float int_y = hppm_entorno.matriz_obstaculos[i][1];
+
+        if (fabs(wp_x - int_x) > 0.15f || fabs(wp_y - int_y) > 0.15f) {
+            hppm_entorno.matriz_obstaculos[i][0] = wp_x;
+            hppm_entorno.matriz_obstaculos[i][1] = wp_y;
+            cambio_detectado = VERDADERO;
+            printf(">> INTERFAZ: Obstaculo estático %d reubicado a X:%.1f Y:%.1f\n", i, wp_x, wp_y);
+        }
+    }
+
+    if (hppm_mision.total_puntos > 0) {
+        uint8_t wp_meta = hppm_mision.waypoints[hppm_mision.punto_actual];
+        float meta_wp_x = WaypointX(wp_meta);
+        float meta_wp_y = WaypointY(wp_meta);
+
+        if (fabs(meta_wp_x - hppm_entorno.meta_x) > 0.15f || fabs(meta_wp_y - hppm_entorno.meta_y) > 0.15f) {
+            hppm_entorno.meta_x = meta_wp_x;
+            hppm_entorno.meta_y = meta_wp_y;
+            
+            double dx = hppm_entorno.meta_x - hppm_entorno.inicio_x;
+            double dy = hppm_entorno.meta_y - hppm_entorno.inicio_y;
+            if (fabs(dx) < 1e-6) dx = (dx < 0.0) ? -1e-6 : 1e-6;
+            double angulo = atan2(dy, dx);
+            hppm_entorno.pendiente_inicial = tan(angulo + (M_PI / 4.0));
+            hppm_entorno.pendiente_final = tan(angulo - (M_PI / 4.0));
+            
+            cambio_detectado = VERDADERO;
+            printf(">> INTERFAZ: Meta reubicada a X:%.1f Y:%.1f\n", meta_wp_x, meta_wp_y);
+        }
+    }
+
+    if (cambio_detectado) {
+        hppm_buffer_trayectoria.recalculando = VERDADERO;
+    }
+}
+
+// MÓDULO MULTI-AGENTE DESCENTRALIZADO CON DESVÍO A ESTRIBOR (REGRA DE TRÁNSITO)
+static void hppm_actualizar_vecinos(void) {
+    struct EnuCoor_f *mi_pos = stateGetPositionEnu_f();
+
+    // Ángulo de avance nominal de este rover
+    double dx_meta = (double)hppm_entorno.meta_x - (double)hppm_entorno.inicio_x;
+    double dy_meta = (double)hppm_entorno.meta_y - (double)hppm_entorno.inicio_y;
+    if (fabs(dx_meta) < 1e-6) dx_meta = (dx_meta < 0.0) ? -1e-6 : 1e-6;
+    double angulo = atan2(dy_meta, dx_meta);
+
+    // Derivación analítica del Jacobiano para determinar qué signo de peso desvía a estribor
+    double m1 = hppm_entorno.pendiente_inicial;
+    double m2 = hppm_entorno.pendiente_final;
+    double dm = m1 - m2;
+    if (fabs(dm) < 1e-6) dm = (dm < 0.0) ? -1e-6 : 1e-6;
+
+    // Vector de desplazamiento provocado por peso unitario (+1.0)
+    double u_x = -1.0 / dm;
+    double u_y = m1 / dm;
+
+    // Vector normal hacia la DERECHA (estribor) del vehículo
+    double r_x = sin(angulo);
+    double r_y = -cos(angulo);
+
+    // Si u * r > 0, un peso positivo empuja a la derecha; si es negativo, se necesita peso negativo
+    double proj_derecha = (u_x * r_x) + (u_y * r_y);
+    float signo_peso = (proj_derecha >= 0.0) ? 1.0f : -1.0f;
+    float peso_repulsion = signo_peso * 80.0f;
+    float radio_repulsion = 3.5f;
+
+    int slot_aliado = 4; // Aliados se mapean en slots 4 a 7
+
+    for (int i = 0; i < 10; i++) {
+        uint8_t id_aliado = ti_acs[i].ac_id;
+        if (id_aliado == 0 || id_aliado == AC_ID) continue;
+
+        float vecino_x = ti_acs[i].enu_pos_i.x / 256.0f;
+        float vecino_y = ti_acs[i].enu_pos_i.y / 256.0f;
+
+        float dx_rel = vecino_x - mi_pos->x;
+        float dy_rel = vecino_y - mi_pos->y;
+        float dist_rel = sqrtf((dx_rel * dx_rel) + (dy_rel * dy_rel));
+
+        // Proyección longitudinal: verificar si el aliado está adelante o ya lo pasamos
+        float proj_adelante = (dx_rel * (float)cos(angulo)) + (dy_rel * (float)sin(angulo));
+
+        // Amenaza activa si está a menos de 22 metros y no más de 3 metros a nuestra espalda
+        if (dist_rel > 0.3f && dist_rel < 22.0f && proj_adelante > -3.0f) {
+            float dx_obs = vecino_x - hppm_entorno.matriz_obstaculos[slot_aliado][0];
+            float dy_obs = vecino_y - hppm_entorno.matriz_obstaculos[slot_aliado][1];
+            float dist_cambio = sqrtf((dx_obs * dx_obs) + (dy_obs * dy_obs));
+
+            // Solo actualizar si el aliado se movió más de 25 cm o si el obstáculo estaba inactivo
+            if (dist_cambio > 0.25f || hppm_entorno.matriz_obstaculos[slot_aliado][3] == 0.0) {
+                hppm_update_obstacle(slot_aliado, vecino_x, vecino_y, radio_repulsion, peso_repulsion);
+                printf(">> ENJAMBRE [ID %d]: Aliado %d detectado a %.1fm (Slot OBS%d, Peso: %.1f). Evasión a estribor.\n",
+                       AC_ID, id_aliado, dist_rel, slot_aliado, peso_repulsion);
+            }
+            slot_aliado++;
+            if (slot_aliado > 7) break;
+        }
+    }
+
+    // Limpiar slots de obstáculos dinámicos cuyos aliados ya no están en conflicto
+    for (int k = slot_aliado; k <= 7; k++) {
+        if (hppm_entorno.matriz_obstaculos[k][3] != 0.0f) {
+            hppm_update_obstacle(k, 999.0f, 999.0f, 0.1f, 0.0f);
+        }
+    }
+}
+
+bool nav_hppm_run(void) {
+    struct EnuCoor_f *pos_gps = stateGetPositionEnu_f();
+    
+    hppm_sincronizar_interfaz();
+    
+    // Ejecución descentralizada multi-agente
+    hppm_actualizar_vecinos();
+    
+    if (hppm_buffer_trayectoria.recalculando) {
+        printf(">> GENERANDO RUTA MATEMÁTICA COMPLETA DESDE L0 A L1 <<\n");
+        hppm_robot.x = hppm_entorno.inicio_x;
+        hppm_robot.y = hppm_entorno.inicio_y;
+        hppm_robot.L = 0.0;
+        hppm_robot.x_anterior = hppm_entorno.inicio_x;
+        hppm_robot.y_anterior = hppm_entorno.inicio_y;
+        hppm_robot.L_anterior = 0.0;
+        hppm_robot.centro_x = hppm_entorno.inicio_x;
+        hppm_robot.centro_y = hppm_entorno.inicio_y;
+        hppm_robot.centro_L = 0.0;
+        hppm_robot.contador_pasos = 1;
+        hppm_robot.radio_actual = hppm_entorno.radio_esfera_paso;
+        hppm_buffer_trayectoria.L_anterior = -1.0;
+        hppm_calcular_ruta_completa(); 
+        hppm_buffer_trayectoria.indice_actual = 0;
+        hppm_buffer_trayectoria.recalculando = FALSO;
+        printf(">> BÚFER GENERADO EXITOSAMENTE: %d PUNTOS <<\n", hppm_buffer_trayectoria.cantidad_puntos);
+    }
+
+    int closest_idx = 0;
+    float min_dist = 999999.0f;
+    for (int i = 0; i < hppm_buffer_trayectoria.cantidad_puntos; i++) {
+        float dx_c = (float)hppm_buffer_trayectoria.x[i] - pos_gps->x;
+        float dy_c = (float)hppm_buffer_trayectoria.y[i] - pos_gps->y;
+        float d = (dx_c * dx_c) + (dy_c * dy_c);
+        if (d < min_dist) {
+            min_dist = d;
+            closest_idx = i;
+        }
+    }
+    
+    int target_idx = closest_idx + 25; 
+    
+    if (hppm_buffer_trayectoria.cantidad_puntos == 0) {
+        target_idx = 0;
+    } else if (target_idx >= hppm_buffer_trayectoria.cantidad_puntos) {
+        target_idx = hppm_buffer_trayectoria.cantidad_puntos - 1;
+    }
+
+    float p1_x, p1_y, p2_x, p2_y;
+    
+    p1_x = pos_gps->x;
+    p1_y = pos_gps->y;
+
+    if (hppm_buffer_trayectoria.cantidad_puntos > 0) {
+        p2_x = (float)hppm_buffer_trayectoria.x[target_idx];
+        p2_y = (float)hppm_buffer_trayectoria.y[target_idx];
+    } else {
+        p2_x = WaypointX(hppm_mision.waypoints[hppm_mision.punto_actual]);
+        p2_y = WaypointY(hppm_mision.waypoints[hppm_mision.punto_actual]);
+    }
+
+    gvf_segment_XY1_XY2(p1_x, p1_y, p2_x, p2_y);
+
+    float dx_meta = hppm_entorno.meta_x - pos_gps->x;
+    float dy_meta = hppm_entorno.meta_y - pos_gps->y;
+    float dist_fisica_al_punto = sqrtf((dx_meta * dx_meta) + (dy_meta * dy_meta));
+
+    if (dist_fisica_al_punto < 3.0f) {
+        guidance_control.cmd.max_speed = 0.5f; 
+    } else {
+        guidance_control.cmd.max_speed = 1.5f; 
+    }
+
+    float hppm_telemetry_array[2] = { (float)hppm_robot.L, (float)hppm_buffer_trayectoria.cantidad_puntos };
+    DOWNLINK_SEND_PAYLOAD_FLOAT(DefaultChannel, DefaultDevice, 2, hppm_telemetry_array);
+
+    if (dist_fisica_al_punto < 2.0f) { 
+        hppm_mision.punto_actual++; 
+        if (hppm_mision.punto_actual < hppm_mision.total_puntos) {
+            hppm_route_start(hppm_mision.waypoints[hppm_mision.punto_actual]);
+            return true; 
+        } else { 
+            guidance_control.cmd.max_speed = 1.5f;
+            return false; 
+        }
+    }
+    
+    return true; 
+} 
+
+bool hppm_frenar(void) {
+    guidance_control.cmd.max_speed = 0.0f;
+    return false;
+}
+
+void hppm_update_obstacle(uint8_t id, float x, float y, float radio, float peso) {
+    if (id < MAX_OBSTACULOS) { 
+        hppm_entorno.matriz_obstaculos[id][0] = x;
+        hppm_entorno.matriz_obstaculos[id][1] = y;
+        hppm_entorno.matriz_obstaculos[id][2] = radio * radio; 
+        hppm_entorno.matriz_obstaculos[id][3] = peso;
+        if (id >= hppm_entorno.num_obstaculos) hppm_entorno.num_obstaculos = id + 1;
+        
+        #ifdef WP_OBS0
+        if (id == 0) { waypoint_move_xy_i(WP_OBS0, (int32_t)(x * 256.0f), (int32_t)(y * 256.0f)); }
+        #endif
+        #ifdef WP_OBS1
+        else if (id == 1) { waypoint_move_xy_i(WP_OBS1, (int32_t)(x * 256.0f), (int32_t)(y * 256.0f)); }
+        #endif
+        #ifdef WP_OBS2
+        else if (id == 2) { waypoint_move_xy_i(WP_OBS2, (int32_t)(x * 256.0f), (int32_t)(y * 256.0f)); }
+        #endif
+        #ifdef WP_OBS3
+        else if (id == 3) { waypoint_move_xy_i(WP_OBS3, (int32_t)(x * 256.0f), (int32_t)(y * 256.0f)); }
+        #endif
+        #ifdef WP_OBS4
+        else if (id == 4) { waypoint_move_xy_i(WP_OBS4, (int32_t)(x * 256.0f), (int32_t)(y * 256.0f)); }
+        #endif
+        #ifdef WP_OBS5
+        else if (id == 5) { waypoint_move_xy_i(WP_OBS5, (int32_t)(x * 256.0f), (int32_t)(y * 256.0f)); }
+        #endif
+        #ifdef WP_OBS6
+        else if (id == 6) { waypoint_move_xy_i(WP_OBS6, (int32_t)(x * 256.0f), (int32_t)(y * 256.0f)); }
+        #endif
+        #ifdef WP_OBS7
+        else if (id == 7) { waypoint_move_xy_i(WP_OBS7, (int32_t)(x * 256.0f), (int32_t)(y * 256.0f)); }
+        #endif
+        
+        hppm_buffer_trayectoria.recalculando = VERDADERO;
+    }
+}
+
+void hppm_parse_obstacle(uint8_t *buf) {
+    // FILTRADO ESTRICTO POR AC_ID: previene interferencias cruzadas vía datalink/Ivy
+    if (DL_HPPM_OBSTACLE_ac_id(buf) != AC_ID) {
+        return; 
+    }
+    printf("\n>> ALERTA: OBSTACULO RECIBIDO PARA MI (AC_ID %d) EN X:%.1f Y:%.1f <<\n", 
+           AC_ID, DL_HPPM_OBSTACLE_x(buf), DL_HPPM_OBSTACLE_y(buf));
+    hppm_update_obstacle(DL_HPPM_OBSTACLE_obs_id(buf), DL_HPPM_OBSTACLE_x(buf), DL_HPPM_OBSTACLE_y(buf), 
+                         DL_HPPM_OBSTACLE_radio(buf), DL_HPPM_OBSTACLE_peso(buf));
+} 

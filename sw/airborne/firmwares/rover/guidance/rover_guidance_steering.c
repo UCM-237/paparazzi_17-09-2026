@@ -33,7 +33,7 @@
 #include "state.h"
 
 #include "filters/pid.h" // Used for p+i speed controller
-#include "modules/lidar/tfmini.h"
+//#include "modules/lidar/tfmini.h" // LÍNEA COMENTADA PARA EVITAR ERROR DE COMPILACIÓN
 
 #include <math.h>
 #include <stdio.h>
@@ -132,10 +132,10 @@ void rover_guidance_steering_init(void)
 
   // Mov avg init Speed and distance
   float speed = stateGetHorizontalSpeedNorm_f();
-  tfmini_event();
+  //tfmini_event(); // LÍNEA COMENTADA PARA EVITAR ERROR
   for(int k = 0; k < MOV_AVG_M; k++){
     mvg_avg[k] = speed;
-    mvg_avg_dist[k] = tfmini.distance;
+    //mvg_avg_dist[k] = tfmini.distance; // LÍNEA COMENTADA PARA EVITAR ERROR
   }
   speed_avg = speed;
 
@@ -149,8 +149,8 @@ void rover_guidance_steering_init(void)
   rollover_protection.max_radius_curvature = 10; // TODO: Remove magic numbers
 
   // Initialize distance protection
-  tfmini_event();
-  obstacle_avoidance.distance = tfmini.distance;
+  //tfmini_event(); // LÍNEA COMENTADA PARA EVITAR ERROR
+  //obstacle_avoidance.distance = tfmini.distance; // LÍNEA COMENTADA PARA EVITAR ERROR
   obstacle_avoidance.use_obstacle_avoidance = 1;
   obstacle_avoidance.use_speed_function = 0;
   obstacle_avoidance.max_distance = 2.0;
@@ -326,8 +326,8 @@ void rover_guidance_steering_speed_ctrl_lyap(float dv_sp)
 void rover_guidance_steering_update_measurment(void)
 {
   obstacle_avoidance.distance = obstacle_avoidance.distance - mvg_avg_dist[ptr_avg_dist]/MOV_AVG_M;
-  tfmini_event();
-  mvg_avg_dist[ptr_avg_dist] = tfmini.distance;
+  //tfmini_event(); // LÍNEA COMENTADA PARA EVITAR ERROR
+  //mvg_avg_dist[ptr_avg_dist] = tfmini.distance; // LÍNEA COMENTADA PARA EVITAR ERROR
   obstacle_avoidance.distance = obstacle_avoidance.distance + mvg_avg_dist[ptr_avg_dist]/MOV_AVG_M;
   ptr_avg_dist = (ptr_avg_dist + 1) % MOV_AVG_M;
 }
@@ -440,4 +440,4 @@ void rover_guidance_steering_kill(void)
 {
   guidance_control.cmd.delta = 0.0;
   guidance_control.cmd.speed = 0.0;
-}
+} 

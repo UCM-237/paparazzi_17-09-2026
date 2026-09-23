@@ -1,0 +1,154 @@
+<?xml version="1.0"?>
+<!DOCTYPE flight_plan SYSTEM "../flight_plan.dtd">
+<!-- Coordenadas reales UCM -->
+<flight_plan alt="660" ground_alt="650" lat0="40.4514297" lon0="-3.7290253" max_dist_from_home="1500" name="Rover Steering Enjambre" security_height="0.3">
+  
+  <waypoints>
+    <waypoint name="HOME" x="0.0" y="0.0"/>
+    
+    <!-- Puntos de Standby (Esquinas para no estorbar en el centro) -->
+    <waypoint name="STDBY_N" x="-30.0" y="30.0"/>  <!-- Pepa (5) -->
+    <waypoint name="STDBY_E" x="30.0" y="30.0"/>   <!-- Anibal (6) -->
+    <waypoint name="STDBY_S" x="30.0" y="-30.0"/>  <!-- Siete (7) -->
+    <waypoint name="STDBY_W" x="-30.0" y="-30.0"/> <!-- Ocho (8) -->
+    
+    <!-- Nodos dinámicos HPPM -->
+    <waypoint name="L0" x="0.0" y="0.0"/>
+    <waypoint name="L1" x="0.0" y="0.0"/>
+    <waypoint name="L2" x="0.0" y="0.0"/>
+    <waypoint name="L3" x="0.0" y="0.0"/>
+    <waypoint name="L4" x="0.0" y="0.0"/>
+    <waypoint name="L5" x="0.0" y="0.0"/>
+    <waypoint name="L6" x="0.0" y="0.0"/>
+    <waypoint name="L7" x="0.0" y="0.0"/>
+    <waypoint name="L8" x="0.0" y="0.0"/>
+    
+    <!-- Memoria virtual de obstáculos para evitar colapso de código -->
+    <waypoint name="OBS0" x="999.0" y="999.0"/> 
+    <waypoint name="OBS1" x="999.0" y="999.0"/>
+    <waypoint name="OBS2" x="999.0" y="999.0"/>
+    <waypoint name="OBS3" x="999.0" y="999.0"/> 
+    <waypoint name="OBS4" x="999.0" y="999.0"/> 
+    <waypoint name="OBS5" x="999.0" y="999.0"/>
+    <waypoint name="OBS6" x="999.0" y="999.0"/>
+    <waypoint name="OBS7" x="999.0" y="999.0"/>
+  </waypoints>
+
+  <modules>
+    <module name="gvf_module"/>
+    <module name="gvf_parametric_bare"/>
+    <module name="traffic_info"/>
+  </modules>
+
+  <blocks>
+    <!-- INICIALIZACIÓN -->
+    <block name="Wait GPS" strip_icon="gps.png">
+      <while cond="!GpsFixValid()"/>
+    </block>
+    
+    <block name="Geo init" strip_icon="googleearth.png">
+      <while cond="LessThan(NavBlockTime(), 10)">
+        <call fun="hppm_frenar()"/>
+      </while>
+      <call_once fun="NavSetGroundReferenceHere()"/>
+      <call_once fun="NavSetAltitudeReferenceHere()"/>
+    </block>
+    
+    <block name="Start Engine" strip_icon="on.png">
+      <while cond="LessThan(NavBlockTime(), 1)"/>
+      <call_once fun="autopilot_set_motors_on(TRUE)"/>
+      <deroute block="Standby_Router"/>
+    </block>
+    
+    <!-- ENRUTADOR STANDBY -->
+    <block name="Standby_Router" strip_button="Standby" strip_icon="home.png">
+      <exception cond="AC_ID == 5" deroute="STDBY_Pepa"/>
+      <exception cond="AC_ID == 6" deroute="STDBY_Anibal"/>
+      <exception cond="AC_ID == 7" deroute="STDBY_Siete"/>
+      <exception cond="AC_ID == 8" deroute="STDBY_Ocho"/>
+    </block>
+    
+    <!-- Se quedan dando círculos en las esquinas esperando órdenes -->
+    <block name="STDBY_Pepa"><while cond="TRUE"><call fun="gvf_ellipse_wp(WP_STDBY_N, 3, 3, 0)"/></while></block>
+    <block name="STDBY_Anibal"><while cond="TRUE"><call fun="gvf_ellipse_wp(WP_STDBY_E, 3, 3, 0)"/></while></block>
+    <block name="STDBY_Siete"><while cond="TRUE"><call fun="gvf_ellipse_wp(WP_STDBY_S, 3, 3, 0)"/></while></block>
+    <block name="STDBY_Ocho"><while cond="TRUE"><call fun="gvf_ellipse_wp(WP_STDBY_W, 3, 3, 0)"/></while></block>
+    
+    <!-- ========================================================== -->
+    <!-- MENÚ DE PRUEBAS PARA LA INTERFAZ GRÁFICA (GCS)             -->
+    <!-- ========================================================== -->
+
+    <!-- PRUEBA 1: CHOQUE FRONTAL (El Reto Máximo) -->
+    <block name="1. Choque Frontal" strip_button="Test Frontal" strip_icon="path.png">
+      <set var="guidance_control.cmd.max_speed" value="1.5"/>
+      <call_once fun="hppm_ruta_limpiar()"/>
+      <exception cond="AC_ID == 5" deroute="Ruta_Frontal_Pepa"/>
+      <exception cond="AC_ID == 6" deroute="Ruta_Frontal_Anibal"/>
+    </block>
+
+    <!-- En la prueba frontal, ambos van sobre el eje Y (X=0) pero en direcciones opuestas -->
+    <block name="Ruta_Frontal_Pepa">
+      <call_once fun="hppm_mover_wp(WP_L0, 0.0, 25.0)"/>   <!-- Sale del Norte -->
+      <call_once fun="hppm_mover_wp(WP_L1, 0.0, -25.0)"/>  <!-- Hacia el Sur -->
+      <deroute block="Ejecutar_Ruta"/>
+    </block>
+    <block name="Ruta_Frontal_Anibal">
+      <call_once fun="hppm_mover_wp(WP_L0, 0.0, -25.0)"/>  <!-- Sale del Sur -->
+      <call_once fun="hppm_mover_wp(WP_L1, 0.0, 25.0)"/>   <!-- Hacia el Norte -->
+      <deroute block="Ejecutar_Ruta"/>
+    </block>
+
+
+    <!-- PRUEBA 2: CRUCE PERPENDICULAR (El clásico de las intersecciones) -->
+    <block name="2. Cruce 90 grados" strip_button="Test 90 Grados" strip_icon="path.png">
+      <set var="guidance_control.cmd.max_speed" value="1.5"/>
+      <call_once fun="hppm_ruta_limpiar()"/>
+      <exception cond="AC_ID == 5" deroute="Ruta_Perpendicular_Pepa"/>
+      <exception cond="AC_ID == 6" deroute="Ruta_Perpendicular_Anibal"/>
+    </block>
+
+    <block name="Ruta_Perpendicular_Pepa">
+      <call_once fun="hppm_mover_wp(WP_L0, 0.0, 25.0)"/>
+      <call_once fun="hppm_mover_wp(WP_L1, 0.0, -25.0)"/>
+      <deroute block="Ejecutar_Ruta"/>
+    </block>
+    <block name="Ruta_Perpendicular_Anibal">
+      <call_once fun="hppm_mover_wp(WP_L0, -25.0, 0.0)"/>
+      <call_once fun="hppm_mover_wp(WP_L1, 25.0, 0.0)"/>
+      <deroute block="Ejecutar_Ruta"/>
+    </block>
+
+
+    <!-- PRUEBA 3: ALCANCE (Aníbal rápido persigue a Pepa lenta en el mismo camino) -->
+    <block name="3. Alcance Trasero" strip_button="Test Overtake" strip_icon="path.png">
+      <call_once fun="hppm_ruta_limpiar()"/>
+      <exception cond="AC_ID == 5" deroute="Ruta_Alcance_Pepa"/>
+      <exception cond="AC_ID == 6" deroute="Ruta_Alcance_Anibal"/>
+    </block>
+
+    <block name="Ruta_Alcance_Pepa">
+      <set var="guidance_control.cmd.max_speed" value="1.0"/> <!-- Pepa va lento -->
+      <call_once fun="hppm_mover_wp(WP_L0, -25.0, -10.0)"/>
+      <call_once fun="hppm_mover_wp(WP_L1, 25.0, -10.0)"/>
+      <deroute block="Ejecutar_Ruta"/>
+    </block>
+    <block name="Ruta_Alcance_Anibal">
+      <set var="guidance_control.cmd.max_speed" value="2.5"/> <!-- Anibal va rápido y la alcanza -->
+      <!-- Anibal empieza un poco atrás para poder alcanzarla a mitad de camino -->
+      <call_once fun="hppm_mover_wp(WP_L0, -35.0, -10.0)"/> 
+      <call_once fun="hppm_mover_wp(WP_L1, 25.0, -10.0)"/>
+      <deroute block="Ejecutar_Ruta"/>
+    </block>
+
+    <!-- ============================================ -->
+    <!-- BLOQUE COMÚN DE EJECUCIÓN HPPM -->
+    <!-- ============================================ -->
+    <block name="Ejecutar_Ruta">
+      <call_once fun="hppm_ruta_add_wp(WP_L0)"/>
+      <call_once fun="hppm_ruta_add_wp(WP_L1)"/>
+      <call_once fun="hppm_ruta_iniciar()"/>
+      <while cond="nav_hppm_run()"/>
+      <deroute block="Standby_Router"/>
+    </block>
+  </blocks>
+</flight_plan> 
