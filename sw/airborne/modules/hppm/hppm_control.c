@@ -21,6 +21,10 @@ TrayectoriaSegura hppm_buffer_trayectoria;
 double historial_ruta_buffer[VENTANA_ESTANCAMIENTO + 1][3];
 double ultimos_centros[3][3];
 
+// Variables para la máquina de estados asíncrona
+static bool calculo_en_progreso = FALSO;
+static int max_intentos_restantes = 0;
+
 void hppm_init(void) {
     memset(&hppm_entorno, 0, sizeof(EntornoNavegacion));
     memset(&hppm_robot, 0, sizeof(EstadoRobot));
@@ -193,15 +197,16 @@ static void hppm_periodic_step(void) {
     hppm_robot.contador_pasos++;
 }
 
-static void hppm_calcular_ruta_completa(void) {
-    hppm_buffer_trayectoria.cantidad_puntos = 0;
-    hppm_buffer_trayectoria.indice_actual = 0;
-    hppm_buffer_trayectoria.recalculando = FALSO;
-    int max_intentos = MAX_PUNTOS_TRAYECTORIA * 5; 
-    
-    while (hppm_robot.L < 1.0 && max_intentos > 0) {
+// NUEVA MÁQUINA DE ESTADOS ASÍNCRONA: Procesa solo lotes de puntos
+static void hppm_calcular_ruta_chunk(void) {
+    int iteraciones_chunk = 0;
+    const int TAMANO_LOTE = 30; // Máximo 30 cálculos por ciclo (Evita bloqueo de CPU a 100Hz)
+
+    while (hppm_robot.L < 1.0 && max_intentos_restantes > 0 && iteraciones_chunk < TAMANO_LOTE) {
         hppm_periodic_step();
+        
         if (isnan(hppm_robot.paso_corregido[0][0]) || isnan(hppm_robot.paso_corregido[1][0])) break; 
+        
         double dist_prev = 999.0;
         if (hppm_buffer_trayectoria.cantidad_puntos > 0) {
             int last_idx = hppm_buffer_trayectoria.cantidad_puntos - 1;
@@ -218,7 +223,14 @@ static void hppm_calcular_ruta_completa(void) {
             hppm_buffer_trayectoria.cantidad_puntos++;
             if (hppm_buffer_trayectoria.cantidad_puntos >= MAX_PUNTOS_TRAYECTORIA) break;
         }
-        max_intentos--;
+        max_intentos_restantes--;
+        iteraciones_chunk++;
+    }
+
+    // Comprobar si el cálculo ha terminado completamente
+    if (hppm_robot.L >= 1.0 || max_intentos_restantes <= 0 || hppm_buffer_trayectoria.cantidad_puntos >= MAX_PUNTOS_TRAYECTORIA || isnan(hppm_robot.paso_corregido[0][0])) {
+        calculo_en_progreso = FALSO;
+        printf(">> BÚFER ASÍNCRONO COMPLETADO: %d PUNTOS <<\n", hppm_buffer_trayectoria.cantidad_puntos);
     }
 }
 
@@ -328,7 +340,6 @@ void hppm_route_start(uint8_t wp_meta) {
     hppm_buffer_trayectoria.recalculando = VERDADERO; 
 }
 
-// Sincroniza ÚNICAMENTE obstáculos estáticos del GCS (0 a 3) para no colisionar con aliados dinámicos (4 a 7)
 static void hppm_sincronizar_interfaz(void) {
     bool cambio_detectado = FALSO;
 
@@ -386,37 +397,31 @@ static void hppm_sincronizar_interfaz(void) {
     }
 }
 
-// MÓDULO MULTI-AGENTE DESCENTRALIZADO CON DESVÍO A ESTRIBOR (REGRA DE TRÁNSITO)
 static void hppm_actualizar_vecinos(void) {
     struct EnuCoor_f *mi_pos = stateGetPositionEnu_f();
 
-    // Ángulo de avance nominal de este rover
     double dx_meta = (double)hppm_entorno.meta_x - (double)hppm_entorno.inicio_x;
     double dy_meta = (double)hppm_entorno.meta_y - (double)hppm_entorno.inicio_y;
     if (fabs(dx_meta) < 1e-6) dx_meta = (dx_meta < 0.0) ? -1e-6 : 1e-6;
     double angulo = atan2(dy_meta, dx_meta);
 
-    // Derivación analítica del Jacobiano para determinar qué signo de peso desvía a estribor
     double m1 = hppm_entorno.pendiente_inicial;
     double m2 = hppm_entorno.pendiente_final;
     double dm = m1 - m2;
     if (fabs(dm) < 1e-6) dm = (dm < 0.0) ? -1e-6 : 1e-6;
 
-    // Vector de desplazamiento provocado por peso unitario (+1.0)
     double u_x = -1.0 / dm;
     double u_y = m1 / dm;
 
-    // Vector normal hacia la DERECHA (estribor) del vehículo
     double r_x = sin(angulo);
     double r_y = -cos(angulo);
 
-    // Si u * r > 0, un peso positivo empuja a la derecha; si es negativo, se necesita peso negativo
     double proj_derecha = (u_x * r_x) + (u_y * r_y);
     float signo_peso = (proj_derecha >= 0.0) ? 1.0f : -1.0f;
     float peso_repulsion = signo_peso * 80.0f;
     float radio_repulsion = 3.5f;
 
-    int slot_aliado = 4; // Aliados se mapean en slots 4 a 7
+    int slot_aliado = 4; 
 
     for (int i = 0; i < 10; i++) {
         uint8_t id_aliado = ti_acs[i].ac_id;
@@ -429,16 +434,13 @@ static void hppm_actualizar_vecinos(void) {
         float dy_rel = vecino_y - mi_pos->y;
         float dist_rel = sqrtf((dx_rel * dx_rel) + (dy_rel * dy_rel));
 
-        // Proyección longitudinal: verificar si el aliado está adelante o ya lo pasamos
         float proj_adelante = (dx_rel * (float)cos(angulo)) + (dy_rel * (float)sin(angulo));
 
-        // Amenaza activa si está a menos de 22 metros y no más de 3 metros a nuestra espalda
         if (dist_rel > 0.3f && dist_rel < 22.0f && proj_adelante > -3.0f) {
             float dx_obs = vecino_x - hppm_entorno.matriz_obstaculos[slot_aliado][0];
             float dy_obs = vecino_y - hppm_entorno.matriz_obstaculos[slot_aliado][1];
             float dist_cambio = sqrtf((dx_obs * dx_obs) + (dy_obs * dy_obs));
 
-            // Solo actualizar si el aliado se movió más de 25 cm o si el obstáculo estaba inactivo
             if (dist_cambio > 0.25f || hppm_entorno.matriz_obstaculos[slot_aliado][3] == 0.0) {
                 hppm_update_obstacle(slot_aliado, vecino_x, vecino_y, radio_repulsion, peso_repulsion);
                 printf(">> ENJAMBRE [ID %d]: Aliado %d detectado a %.1fm (Slot OBS%d, Peso: %.1f). Evasión a estribor.\n",
@@ -449,7 +451,6 @@ static void hppm_actualizar_vecinos(void) {
         }
     }
 
-    // Limpiar slots de obstáculos dinámicos cuyos aliados ya no están en conflicto
     for (int k = slot_aliado; k <= 7; k++) {
         if (hppm_entorno.matriz_obstaculos[k][3] != 0.0f) {
             hppm_update_obstacle(k, 999.0f, 999.0f, 0.1f, 0.0f);
@@ -461,12 +462,11 @@ bool nav_hppm_run(void) {
     struct EnuCoor_f *pos_gps = stateGetPositionEnu_f();
     
     hppm_sincronizar_interfaz();
-    
-    // Ejecución descentralizada multi-agente
     hppm_actualizar_vecinos();
     
-    if (hppm_buffer_trayectoria.recalculando) {
-        printf(">> GENERANDO RUTA MATEMÁTICA COMPLETA DESDE L0 A L1 <<\n");
+    // INTEGRACIÓN ASÍNCRONA: Inicialización de la máquina de estados
+    if (hppm_buffer_trayectoria.recalculando && !calculo_en_progreso) {
+        printf(">> INICIANDO CÁLCULO DE RUTA MATEMÁTICA ASÍNCRONO <<\n");
         hppm_robot.x = hppm_entorno.inicio_x;
         hppm_robot.y = hppm_entorno.inicio_y;
         hppm_robot.L = 0.0;
@@ -479,10 +479,18 @@ bool nav_hppm_run(void) {
         hppm_robot.contador_pasos = 1;
         hppm_robot.radio_actual = hppm_entorno.radio_esfera_paso;
         hppm_buffer_trayectoria.L_anterior = -1.0;
-        hppm_calcular_ruta_completa(); 
+        
+        hppm_buffer_trayectoria.cantidad_puntos = 0;
         hppm_buffer_trayectoria.indice_actual = 0;
-        hppm_buffer_trayectoria.recalculando = FALSO;
-        printf(">> BÚFER GENERADO EXITOSAMENTE: %d PUNTOS <<\n", hppm_buffer_trayectoria.cantidad_puntos);
+        max_intentos_restantes = MAX_PUNTOS_TRAYECTORIA * 5;
+        
+        calculo_en_progreso = VERDADERO;
+        hppm_buffer_trayectoria.recalculando = FALSO; // Apagamos el flag externo
+    }
+
+    // INTEGRACIÓN ASÍNCRONA: Ejecución de lotes sin bloquear CPU
+    if (calculo_en_progreso) {
+        hppm_calcular_ruta_chunk();
     }
 
     int closest_idx = 0;
@@ -524,12 +532,6 @@ bool nav_hppm_run(void) {
     float dy_meta = hppm_entorno.meta_y - pos_gps->y;
     float dist_fisica_al_punto = sqrtf((dx_meta * dx_meta) + (dy_meta * dy_meta));
 
-    if (dist_fisica_al_punto < 3.0f) {
-        guidance_control.cmd.max_speed = 0.5f; 
-    } else {
-        guidance_control.cmd.max_speed = 1.5f; 
-    }
-
     float hppm_telemetry_array[2] = { (float)hppm_robot.L, (float)hppm_buffer_trayectoria.cantidad_puntos };
     DOWNLINK_SEND_PAYLOAD_FLOAT(DefaultChannel, DefaultDevice, 2, hppm_telemetry_array);
 
@@ -539,7 +541,6 @@ bool nav_hppm_run(void) {
             hppm_route_start(hppm_mision.waypoints[hppm_mision.punto_actual]);
             return true; 
         } else { 
-            guidance_control.cmd.max_speed = 1.5f;
             return false; 
         }
     }
@@ -590,7 +591,6 @@ void hppm_update_obstacle(uint8_t id, float x, float y, float radio, float peso)
 }
 
 void hppm_parse_obstacle(uint8_t *buf) {
-    // FILTRADO ESTRICTO POR AC_ID: previene interferencias cruzadas vía datalink/Ivy
     if (DL_HPPM_OBSTACLE_ac_id(buf) != AC_ID) {
         return; 
     }
