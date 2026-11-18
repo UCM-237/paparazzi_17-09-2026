@@ -97,6 +97,10 @@ def record(args):
         rx = re.compile(args.only)
         todo = [j for j in todo if rx.search(f"{j[0].relative_to(CONF).with_suffix('')}/{j[1]}/{j[2]}".replace("/", "__"))]
     print(f"{len(todo)} (conf, aircraft, target) combinations")
+    # the generator also archives each expanded configuration in var/conf:
+    # remove the archives created by this run afterwards
+    var_conf = HOME / "var" / "conf"
+    before = set(os.listdir(var_conf)) if var_conf.is_dir() else set()
     groups = {}
     for j in todo:
         groups.setdefault(j[1], []).append(j)
@@ -108,6 +112,9 @@ def record(args):
                 if rc != 0:
                     failed += 1
     print(f"done, {failed} combinations exited non-zero (recorded, not an error by itself)")
+    if var_conf.is_dir():
+        for f in set(os.listdir(var_conf)) - before:
+            (var_conf / f).unlink(missing_ok=True)
 
 
 def files_under(d):

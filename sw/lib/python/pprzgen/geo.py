@@ -393,7 +393,11 @@ def egm96_of_wgs84(g):
     ilon = (lon + (360 if lon < 0 else 0)) * 4
     i = 2 * (ilat * _EGM_NCOLS + ilon)
     x = (_egm96[i] << 8) + _egm96[i + 1]
-    # (x lsl 16) asr 16 is the identity on 63-bit OCaml ints: no sign extension
+    # signed 16-bit value (the OCaml code meant to sign-extend with
+    # (x lsl 16) asr 16, a no-op on 63-bit ints: negative geoid heights
+    # came out as about +655 m)
+    if x >= 0x8000:
+        x -= 0x10000
     return float(x) / 100.0
 
 
