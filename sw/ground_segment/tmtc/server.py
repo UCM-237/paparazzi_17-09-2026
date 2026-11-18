@@ -135,8 +135,10 @@ class Server:
         if self.o.log_name == "":
             log_name, data_name = basename + ".log", basename + ".data"
         else:
-            # (sic) the OCaml server names the data file ".log" when -log_name is used
-            log_name = data_name = "%s__%s.log" % (self.o.log_name, basename)
+            # (the OCaml server named the data file ".log" too, so the data
+            # overwrote the description of the log)
+            name = "%s__%s" % (self.o.log_name, basename)
+            log_name, data_name = name + ".log", name + ".data"
         with open(concat(self.logs_path, log_name), "w", encoding="latin-1", newline="") as f:
             f.write("<!-- logged with runtime paparazzi_version " + env.get_paparazzi_version() + " -->\n")
             try:

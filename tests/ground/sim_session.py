@@ -72,6 +72,7 @@ def main():
     ap.add_argument("--link", default="python")
     ap.add_argument("--port", type=int, default=2777)
     ap.add_argument("--gcs", action="store_true", help="also start PprzGCS (off-screen) and check its requests")
+    ap.add_argument("--log_name", default="", help="with --log: server -log_name <name>")
     ap.add_argument("--log", action="store_true", help="let the server write var/logs files and check them")
     a = ap.parse_args()
     bus_addr = "127.255.255.255:%d" % a.port
@@ -94,7 +95,8 @@ def main():
     try:
         logdir = os.path.join(HOME, "var", "logs")
         before_logs = set(os.listdir(logdir)) if os.path.isdir(logdir) else set()
-        start("server", PROGS[("server", a.server)] + ["-b", bus_addr] + ([] if a.log else ["-n"]))
+        start("server", PROGS[("server", a.server)] + ["-b", bus_addr] + ([] if a.log else ["-n"])
+              + (["-log_name", a.log_name] if a.log_name else []))
         start("link", PROGS[("link", a.link)] + ["-b", bus_addr, "-udp", "-udp_broadcast"])
         time.sleep(2)
         start("sim", ["/usr/bin/python3", HOME + "/sw/simulator/pprzsim-launch", "-a", a.a, "-t", "nps",
@@ -163,6 +165,11 @@ def main():
             data = [f for f in new_logs if f.endswith(".data")]
             xmlf = [f for f in new_logs if f.endswith(".log")]
             check("server wrote a .log and a .data file", data and xmlf, " ".join(new_logs))
+            if a.log_name:
+                check("-log_name: files named <name>__<date>.log/.data, data_file points to the .data",
+                      data and xmlf and data[0].startswith(a.log_name + "__") and data[0][:-5] == xmlf[0][:-4]
+                      and ('data_file="%s"' % data[0]) in open(os.path.join(logdir, xmlf[0]), encoding="latin-1").read(),
+                      " ".join(new_logs))
             if data and xmlf:
                 sys.path.insert(0, os.path.join(HOME, "sw", "lib", "python"))
                 from pprzgen import xml_light as X
