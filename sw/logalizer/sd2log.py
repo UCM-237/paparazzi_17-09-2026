@@ -20,6 +20,7 @@ from pprzgen import aircraft as AC  # noqa: E402
 from pprzgen import pprzlink as PL  # noqa: E402
 from pprzgen.ocaml import concat, string_of_float, Failure, NotFound  # noqa: E402
 from pprzground.messages import MessageClass, int_assoc, assoc, int_of_value  # noqa: E402
+from pprzground.transport import PprzlogTransport  # noqa: E402
 
 VAR_PATH = concat(env.paparazzi_home, "var")
 DEFAULT_LOGS_PATH = concat(VAR_PATH, "logs")
@@ -37,39 +38,6 @@ def unix_time_of_tow(tow, week=None):
         return u(tow)
     gps_seconds = GPS_EPOCH + float(week) * 60.0 * 60.0 * 24.0 * 7.0 + float(tow)
     return gps_seconds - float(sum(1 for x in LEAPS if gps_seconds >= x))
-
-
-class PprzlogTransport:
-    """Pprzlog_transport: STX len source timestamp(int32) pprz_data ck"""
-    STX = 0x99
-
-    def __init__(self):
-        self.nb_err = 0
-
-    def parse(self, use, buf):
-        consumed = 0
-        while True:
-            try:
-                start = buf.index(self.STX)
-            except ValueError:
-                return consumed + len(buf)
-            if len(buf) - start <= 1:
-                return consumed + start
-            length = buf[start + 1] + 8
-            end = start + length
-            if len(buf) < end:
-                return consumed + start
-            msg = buf[start:end]
-            ck = 0
-            for i in range(1, len(msg) - 1):
-                ck = (ck + msg[i]) & 0xFF
-            if ck == msg[-1]:
-                assert msg[1] + 8 == len(msg)
-                use(msg[2:len(msg) - 1])
-            else:
-                self.nb_err += 1
-            consumed += end
-            buf = buf[end:]
 
 
 def hex_of_int_array(v):
