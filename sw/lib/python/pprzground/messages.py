@@ -488,3 +488,55 @@ def _messages_xml():
     if _xml_cache is None:
         _xml_cache = parse_messages_file()
     return _xml_cache
+
+
+# --------------------------------------------------------------------------
+# helpers used by the server
+
+def string_of_values(values):
+    """Server_globals.string_of_values (log lines): plain string_of_value."""
+    return " ".join(string_of_value(v) for _, v in values)
+
+
+def json_of_message(msg, values):
+    vd = {}
+    for k, v in values:
+        if not any(f.name == k for f in msg.fields):
+            raise ValueError("json_of_message: unknown field '%s' in message '%s'" % (k, msg.name))
+        vd.setdefault(k, v)
+    parts = []
+    for f in msg.fields:
+        if f.name not in vd:
+            raise Failure("json_of_message: field_name not found")
+        v = vd[f.name]
+        if v[0] == "array":
+            parts.append('"%s": { %s }' % (f.name, ", ".join(
+                '"%s_%i": %s' % (f.name, i, formatted_string_of_value(f.format, e)) for i, e in enumerate(v[1]))))
+        elif v[0] == "string":
+            parts.append('"%s": "%s"' % (f.name, v[1]))
+        else:
+            parts.append('"%s": %s' % (f.name, formatted_string_of_value(f.format, v)))
+    return '{ "%s": { %s } }' % (msg.name, ", ".join(parts))
+
+
+def assoc(a, values):
+    a = a.lower()
+    for k, v in values:
+        if k == a:
+            return v
+    raise Failure("Attribute '%s' not found in '%s'" % (a, " ".join("%s=%s" % (k, string_of_value(v)) for k, v in values)))
+
+
+def string_assoc(a, values):
+    return string_of_value(assoc(a, values))
+
+
+def int_assoc(a, values):
+    return int_of_value(assoc(a, values))
+
+
+def float_assoc(a, values):
+    v = assoc(a, values)
+    if v[0] != "float":
+        raise ValueError("PprzLink.float_assoc")
+    return v[1]

@@ -1,2 +1,2 @@
-<program command="sw/ground_segment/tmtc/server" name="Server" />
+<program command="sw/ground_segment/tmtc/server.py" name="Server" />
 

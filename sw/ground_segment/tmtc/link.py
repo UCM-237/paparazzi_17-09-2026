@@ -58,17 +58,31 @@ class Link:
         self.xb_init_done = False
         self.xb_packets = [(b"", -1)] * 256
         self.xb_frame_id = 0
+        self.outbox = []  # Ivy messages to publish once the lock is released
 
     # ---------------------------------------------------------- Ivy output
     def _ts(self):
         return None if self.ts_start is None else time.time() - self.ts_start
 
+    # messages are formatted immediately (formatting errors drop the message
+    # before the status update, as in OCaml) and published later, without the lock
     def send_message_over_ivy(self, sender, name, values):
-        ivybus.message_send(self.tm, sender, name, values, timestamp=self._ts(),
-                            link_id=self.o.id if self.o.redlink else None)
+        m = ivybus.format_message(self.tm, sender, name, values, self._ts(), self.o.id if self.o.redlink else None)
+        if m is not None:
+            self.outbox.append(m)
 
     def send_ground_over_ivy(self, sender, name, values):
-        ivybus.message_send(self.ground, sender, name, values, timestamp=self._ts())
+        m = ivybus.format_message(self.ground, sender, name, values, self._ts())
+        if m is not None:
+            self.outbox.append(m)
+
+    def flush_outbox(self):
+        """Publish on Ivy WITHOUT holding the lock: Ivy reception threads (uplink
+        callbacks) must never wait for a thread that is blocked sending."""
+        with self.lock:
+            out, self.outbox = self.outbox, []
+        for m in out:
+            ivybus.send(m)
 
     # ---------------------------------------------------------- status
     def update_status(self, ac_id, buf_size, is_pong, udp_peername=None):
@@ -275,6 +289,7 @@ class Link:
                         f()
                     except Exception as e:
                         sys.stderr.write("%s\n" % e)
+                self.flush_outbox()
         threading.Thread(target=loop, daemon=True).start()
 
     def run(self):
@@ -319,6 +334,7 @@ class Link:
                         buf = buf[1:]
                     else:
                         break
+            self.flush_outbox()
 
 
 def main():
