@@ -11,6 +11,55 @@ import logging
 logging.getLogger("Ivy").setLevel(logging.WARNING)
 
 
+def _patch_duplicate_connections():
+    """ivy-python only avoids connecting twice to the same agent when it
+    initiates the connection. When two agents start at the same time (e.g.
+    the programs of a Paparazzi Center session), each one connects to the
+    other and they end up with two connections; every message was then sent
+    on both and received twice. The C Ivy library (used by the former OCaml
+    programs) drops such duplicates. Here each peer is identified by its IP
+    and the listening port it announces at the start of the handshake, and a
+    message is sent on only one connection per peer."""
+    from ivy import ivy as I
+    if getattr(I.IvyServer, "_pprz_dedup", False):
+        return
+
+    orig_process = I.IvyHandler.process_ivymessage
+
+    def process_ivymessage(self, msg, client):
+        try:
+            mid, num_id, _ = I.decode_msg(msg)
+            if mid == I.START_INIT:
+                client.pprz_peer = (client.ip, int(num_id))
+        except Exception:
+            pass
+        return orig_process(self, msg, client)
+
+    def send_msg(self, message):
+        self._global_lock.acquire()
+        count = 0
+        try:
+            done = set()
+            for client in list(self._clients.values()):
+                peer = getattr(client, "pprz_peer", None)
+                if peer is not None and peer in done:
+                    continue
+                if client.send_msg(message):
+                    count += 1
+                    if peer is not None:
+                        done.add(peer)
+        finally:
+            self._global_lock.release()
+        return count
+
+    I.IvyHandler.process_ivymessage = process_ivymessage
+    I.IvyServer.send_msg = send_msg
+    I.IvyServer._pprz_dedup = True
+
+
+_patch_duplicate_connections()
+
+
 def default_ivy_bus():
     """Defivybus.default_ivy_bus"""
     return os.environ.get("IVY_BUS", "127.255.255.255:2010")
