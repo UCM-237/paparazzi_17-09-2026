@@ -288,12 +288,28 @@ def run(o, aircraft, target):
         out("(skip)")
     else:
         module_files = [m.xml_filename for m in loaded_modules]
-        if is_older(makefile_ac, [ac.airframe.filename] + module_files):
+        # Makefile.ac holds the sections of all the targets, but some content
+        # (e.g. the generated autopilot) is only known for the current target:
+        # also replace it when its content changed, otherwise building 'ap'
+        # after 'nps' used a stale file ("Rover firmware should use generated
+        # autopilot"). The Version line alone does not count as a change.
+        if is_older(makefile_ac, [ac.airframe.filename] + module_files) \
+                or _makefile_body(makefile_ac) != _makefile_body(temp_makefile_ac):
             out("(copying)")
             shutil.move(temp_makefile_ac, makefile_ac)
         else:
             out("(skip copying)")
         out(" done\n")
+    if os.path.exists(temp_makefile_ac):
+        os.remove(temp_makefile_ac)
+
+
+def _makefile_body(f):
+    try:
+        with open(f, "rb") as fh:
+            return [l for l in fh.read().split(b"\n") if not l.startswith(b"# Version ")]
+    except OSError:
+        return None
 
 
 def entry():
