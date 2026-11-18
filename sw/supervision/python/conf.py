@@ -7,7 +7,7 @@ import os
 import subprocess
 import utils
 
-MOD_DEP = os.path.join(utils.PAPARAZZI_SRC, "sw", "tools", "generators", "dump_modules_list.out")
+MOD_DEP = os.path.join(utils.PAPARAZZI_SRC, "sw", "tools", "generators", "dump_modules_list.py")
 CONF = os.path.join(utils.PAPARAZZI_HOME, "conf", "conf.xml")
 
 

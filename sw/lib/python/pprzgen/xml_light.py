@@ -1038,17 +1038,71 @@ class _Parse:
             raise XmlError(f"Node expected line {self.lx.line}")
 
 
+# Parsing is a pure function of the file contents: cache results (the
+# generators parse the same module files and DTDs hundreds of times).
+# Trees are never modified in place, so sharing them is safe.
+_cache = {}
+
+
+def _file_key(fname):
+    try:
+        st = os.stat(fname)
+    except OSError:
+        return None
+    return (os.path.abspath(fname), st.st_mtime_ns, st.st_size)
+
+
+def _cached(kind, fname, compute):
+    key = _file_key(fname)
+    if key is None:
+        return compute()
+    k = (kind,) + key
+    r = _cache.get(k)
+    if r is None:
+        try:
+            r = ("ok", compute())
+        except Exception as e:
+            r = ("err", e)
+        _cache[k] = r
+    if r[0] == "err":
+        raise r[1]
+    return r[1]
+
+
+def _ocaml_dirname(name):
+    """Filename.dirname (Unix)"""
+    if name == "":
+        return "."
+    n = len(name) - 1
+    while n >= 0 and name[n] == "/":
+        n -= 1
+    if n < 0:
+        return name[0:1]
+    while n >= 0 and name[n] != "/":
+        n -= 1
+    if n < 0:
+        return "."
+    while n >= 0 and name[n] == "/":
+        n -= 1
+    if n < 0:
+        return name[0:1]
+    return name[:n + 1]
+
+
 def parse_file(fname):
     """Xml.parse_file: DTD files are resolved relative to the document."""
-    p = XmlParser()
-    path = os.path.dirname(fname) or "."
+    def compute():
+        p = XmlParser()
+        path = _ocaml_dirname(fname)
 
-    def resolve(f):
-        name = f if path == "." else path + "/" + f
-        return dtd_check(dtd_parse_file(name))
+        def resolve(f):
+            name = f if path == "." else path + "/" + f
+            return _cached("dtd", name, lambda: dtd_check(dtd_parse_file(name)))
 
-    p.resolve = resolve
-    return p.parse_file(fname)
+        p.resolve = resolve
+        return p.parse_file(fname)
+
+    return _cached("xml", fname, compute)
 
 
 def parse_string(text):
