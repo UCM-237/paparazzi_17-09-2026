@@ -14,16 +14,22 @@ Open a terminal and execute each lines below. If one fails, ask for help on `Git
 Install Paparazzi
 -----------------
 
-Add paparazzi apt-repository and install dependencies:
+Add paparazzi apt-repository (for Ivy, PprzGCS and JSBSim) and install dependencies.
+The ground segment is written in Python (no OCaml is needed any more):
 
 .. code-block:: bash
 
     sudo add-apt-repository -y ppa:paparazzi-uav/ppa
     sudo apt-get update
-    sudo apt-get -f -y install paparazzi-dev paparazzi-jsbsim dfu-util pprzgcs
-    sudo apt-get install python-is-python3 gcc-arm-none-eabi gdb-multiarch
+    sudo apt-get -f -y install pprzgcs paparazzi-jsbsim ivy-c-dev ivy-python dfu-util \
+        make gcc g++ git bzip2 bc pkg-config libgsl-dev libusb-dev libpcre2-dev libxml2-dev libglib2.0-dev \
+        python-is-python3 python3-lxml python3-numpy python3-yaml python3-unidecode python3-serial \
+        python3-pyqt5 python3-pyqt5.qtsvg python3-pyqtgraph libsdl2-2.0-0 speech-dispatcher \
+        gcc-arm-none-eabi gdb-multiarch
 
-.. note:: If you are on Ubuntu 24.04, please also install ``liblablgtk2-ocaml-dev`` in order to use the plot and messages tools.
+.. note:: The ground programs are started with the system Python (``/usr/bin/python3``), which is
+   where ``ivy-python`` and PyQt5 are installed. Another Python first in your ``PATH`` (e.g. Anaconda)
+   does not matter for them.
 
 Clone the repository: 
 
