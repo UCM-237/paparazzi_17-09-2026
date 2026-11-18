@@ -28,6 +28,7 @@ HOME = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 os.environ["PAPARAZZI_HOME"] = HOME
 os.environ["PAPARAZZI_SRC"] = HOME
 sys.path.insert(0, os.path.join(HOME, "sw", "lib", "python"))
+from pprzground import ivybus  # noqa: E402,F401  (fixes of ivy-python races)
 from ivy.std_api import IvyInit, IvyStart, IvyBindMsg, IvySendMsg  # noqa: E402
 
 PROGS = {
@@ -150,14 +151,17 @@ def main():
         lr = bus.find(r"^link LINK_REPORT %s " % ac_id)
         check("link publishes LINK_REPORT", lr, lr[-1] if lr else "")
         if a.gcs:
-            reqs = bus.find(r"(AIRCRAFTS_REQ|CONFIG_REQ)")
-            gcs_reqs = [r for r in reqs if not r.startswith("simtest")]
-            check("PprzGCS sent AIRCRAFTS/CONFIG requests", gcs_reqs, " | ".join(r[:50] for r in gcs_reqs[:3]))
-            answers = []
-            for r in gcs_reqs:
-                rid = r.split()[1]
-                answers += bus.find(r"^%s ground (AIRCRAFTS|CONFIG) " % re.escape(rid))
-            check("server answered PprzGCS requests", len(answers) >= len(gcs_reqs) > 0,
+            # PprzGCS asks the server as soon as it joins the bus, possibly
+            # before it knows this test agent's subscriptions: its requests are
+            # not always visible here, the server's answers (sent to all) are
+            end = time.time() + 30  # PprzGCS can be slow to start (e.g. in a fresh container)
+            while True:
+                answers = bus.find(r"^(?!42_)[0-9]+_[0-9]+ ground (AIRCRAFTS|CONFIG) ")
+                kinds = set(x.split()[2] for x in answers)
+                if {"AIRCRAFTS", "CONFIG"} <= kinds or time.time() > end:
+                    break
+                time.sleep(0.5)
+            check("server answered PprzGCS requests (AIRCRAFTS and CONFIG)", {"AIRCRAFTS", "CONFIG"} <= kinds,
                   " | ".join(x[:70] for x in answers[:2]))
             gcs_out = bus.find(r"^(gcs|pprzgcs|PprzGCS)")
         if a.log:

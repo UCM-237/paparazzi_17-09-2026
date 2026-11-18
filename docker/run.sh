@@ -30,7 +30,9 @@ else
 fi
 
 # PAPARAZZI_HOME inside the container
-PPRZ_HOME_CONTAINER=/home/pprz/paparazzi
+# same path as on the host: generated files and dependency files contain
+# absolute paths, so builds inside and outside the container stay compatible
+PPRZ_HOME_CONTAINER=$PAPARAZZI_SRC
 # share the paparazzi directory and set it as working directory
 SHARE_PAPARAZZI_HOME_OPTS="--volume=$PAPARAZZI_SRC:$PPRZ_HOME_CONTAINER \
   --env=PAPARAZZI_HOME=$PPRZ_HOME_CONTAINER \

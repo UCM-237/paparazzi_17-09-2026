@@ -24,9 +24,9 @@ RUN apt-get -y install tzdata
 # dependencies of the OCaml-free Paparazzi (Python ground segment), PprzGCS,
 # JSBSim and the ARM cross compiler (Ubuntu 24.04: arm-none-eabi GCC 13.2,
 # known to build the airborne code; GCC 14 needs the gvf.c fix)
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y -o Acquire::Retries=5 \
     pprzgcs paparazzi-jsbsim ivy-c-dev ivy-python dfu-util \
-    make cmake gcc g++ git bzip2 bc pkg-config libgsl-dev libusb-dev libpcre2-dev libxml2-dev libglib2.0-dev \
+    make cmake gcc g++ git bzip2 bc pkg-config libgsl-dev libusb-dev libpcre2-dev libpcre3-dev libxml2-dev libglib2.0-dev libsdl1.2-dev \
     python-is-python3 python3-lxml python3-numpy python3-yaml python3-unidecode python3-serial \
     python3-pyqt5 python3-pyqt5.qtsvg python3-pyqtgraph libsdl2-2.0-0 speech-dispatcher \
     gcc-arm-none-eabi libnewlib-arm-none-eabi gdb-multiarch \

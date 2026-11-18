@@ -22,7 +22,7 @@ The ground segment is written in Python (no OCaml is needed any more):
     sudo add-apt-repository -y ppa:paparazzi-uav/ppa
     sudo apt-get update
     sudo apt-get -f -y install pprzgcs paparazzi-jsbsim ivy-c-dev ivy-python dfu-util \
-        make gcc g++ git bzip2 bc pkg-config libgsl-dev libusb-dev libpcre2-dev libxml2-dev libglib2.0-dev \
+        make gcc g++ git bzip2 bc pkg-config libgsl-dev libusb-dev libpcre2-dev libpcre3-dev libxml2-dev libglib2.0-dev libsdl1.2-dev \
         python-is-python3 python3-lxml python3-numpy python3-yaml python3-unidecode python3-serial \
         python3-pyqt5 python3-pyqt5.qtsvg python3-pyqtgraph libsdl2-2.0-0 speech-dispatcher \
         gcc-arm-none-eabi gdb-multiarch
