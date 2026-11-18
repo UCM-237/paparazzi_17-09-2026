@@ -1,2 +1,2 @@
-<program command="sw/logalizer/play" name="Log File Player" />
+<program command="sw/logalizer/play.py" name="Log File Player" />
 
