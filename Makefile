@@ -41,8 +41,6 @@ endif
 export PAPARAZZI_SRC
 export PAPARAZZI_HOME
 
-OCAML=$(shell which ocaml)
-OCAMLRUN=$(shell which ocamlrun)
 BUILD_DATETIME:=$(shell date +%Y%m%d-%H%M%S)
 
 # default mktemp in OS X doesn't work, use gmktemp with macports coreutils
@@ -60,11 +58,8 @@ LIB=sw/lib
 STATICINCLUDE=$(PAPARAZZI_HOME)/var/include
 CONF=$(PAPARAZZI_SRC)/conf
 AIRBORNE=sw/airborne
-SIMULATOR=sw/simulator
-COCKPIT=sw/ground_segment/cockpit
 TMTC=sw/ground_segment/tmtc
 GENERATORS=$(PAPARAZZI_SRC)/sw/tools/generators
-JOYSTICK=sw/ground_segment/joystick
 EXT=sw/ext
 TOOLS=sw/tools
 
@@ -72,11 +67,10 @@ TOOLS=sw/tools
 # build some stuff in subdirs
 # nothing should depend on these...
 #
-PPRZCENTER=sw/supervision
 MISC=sw/ground_segment/misc
 LOGALIZER=sw/logalizer
 
-SUBDIRS = $(PPRZCENTER) $(LOGALIZER) sw/tools
+SUBDIRS = $(LOGALIZER) sw/tools
 SUBDIRS_EXTRA = $(MISC)
 
 #
@@ -138,39 +132,23 @@ conf/tools/blacklisted: conf/tools/blacklisted_example
 	cp conf/tools/blacklisted_example conf/tools/blacklisted
 
 ground_segment: _print_building conf libpprz subdirs static
-ground_segment.opt: ground_segment cockpit.opt tmtc.opt
 
-static: cockpit tmtc generators sim_static joystick static_h
+static: tmtc generators static_h
 
 libpprzlink.update:
 	$(MAKE) -C $(EXT) pprzlink.update
 
+# only the Python library of pprzlink is needed by the (Python) ground segment
 libpprzlink.install:
-	$(Q)Q=$(Q) MAKEFLAGS=-j1 DESTDIR=$(PPRZLINK_INSTALL) PPRZLINK_LIB_VERSION=${PPRZLINK_LIB_VERSION} $(MAKE) -C $(PPRZLINK_DIR) libpprzlink-install
+	$(Q)Q=$(Q) MAKEFLAGS=-j1 DESTDIR=$(PPRZLINK_INSTALL)/python $(MAKE) -C $(PPRZLINK_DIR)/lib/v$(PPRZLINK_LIB_VERSION)/python install
 
 libpprz: libpprzlink.update libpprzlink.install _save_build_version
-	$(MAKE) -C $(LIB)/ocaml
-
-cockpit: libpprz
-	$(MAKE) -C $(COCKPIT)
-
-cockpit.opt: libpprz
-	$(MAKE) -C $(COCKPIT) opt
 
 tmtc: libpprz
 	$(MAKE) -C $(TMTC)
 
-tmtc.opt: libpprz
-	$(MAKE) -C $(TMTC) opt
-
+# the code generators are Python scripts (sw/tools/generators/*.py), nothing to build
 generators: libpprz
-	$(MAKE) -C $(GENERATORS)
-
-joystick: libpprz
-	$(MAKE) -C $(JOYSTICK)
-
-sim_static: libpprz
-	$(MAKE) -C $(SIMULATOR)
 
 ext:
 	$(MAKE) -C $(EXT)
@@ -193,7 +171,6 @@ $(SUBDIRS): libpprz
 $(SUBDIRS_EXTRA): libpprz
 	$(MAKE) -C $@
 
-$(PPRZCENTER): libpprz
 
 $(LOGALIZER): libpprz
 
@@ -249,8 +226,6 @@ include Makefile.ac
 
 ac_h ac fbw ap: static conf generators ext
 
-sim: sim_static
-
 
 #
 # doxygen html documentation
@@ -282,7 +257,6 @@ cleanspaces:
 	find sw -path sw/ext -prune -o -type f -name '*.py' -exec sed -i {} -e 's/[ \t]*$$//' \;
 	find conf -name '*.makefile' -exec sed -i {} -e 's/[ \t]*$$//' ';'
 	find . -path ./sw/ext -prune -o -name Makefile -exec sed -i {} -e 's/[ \t]*$$//' ';'
-	find sw -name '*.ml' -o -name '*.mli' -exec sed -i {} -e 's/[ \t]*$$//' ';'
 	find conf -name '*.xml' -exec sed -i {} -e 's/[ \t]*$$//' ';'
 
 distclean : dist_clean
@@ -354,8 +328,8 @@ test_full:
 
 
 
-.PHONY: all print_build_version _print_building _save_build_version init dox ground_segment ground_segment.opt \
-subdirs $(SUBDIRS) conf ext libpprz libpprzlink.update libpprzlink.install cockpit cockpit.opt tmtc tmtc.opt generators\
-static sim_static opencv_bebop\
+.PHONY: all print_build_version _print_building _save_build_version init dox ground_segment \
+subdirs $(SUBDIRS) conf ext libpprz libpprzlink.update libpprzlink.install tmtc generators\
+static opencv_bebop\
 clean cleanspaces ab_clean dist_clean distclean dist_clean_irreversible \
 test test_examples test_math test_all_confs

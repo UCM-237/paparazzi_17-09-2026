@@ -23,89 +23,16 @@
 # Quiet compilation
 Q=@
 
-include ../Makefile.ocaml
-INCLUDES=
-PKG = -package glibivy,pprz,$(USE_LABELGTK)
-LINKPKG = $(PKG) -linkpkg -dllpath-pkg pprz,pprzlink,$(USE_LABELGTK)
+CC = gcc
+CFLAGS=-g -O2 -Wall
 
-LABLGTK2GLADE = $(shell ocamlfind query -p-format lablgtk2.glade 2>/dev/null)
-
-ifeq ($(USE_LABELGTK),lablgtk2)
-# only compile it lablgtk2.glade is installed
-ifeq ($(LABLGTK2GLADE),)
-XPKG = -package lablgtk2,pprz.xlib
-XLINKPKG = $(XPKG) -linkpkg -dllpath-pkg pprz.xlib,pprzlink,$(USE_LABELGTK)
-all : play plotter sd2log plotprofile openlog2tlm sdlogger_download
-else
-XPKG = -package lablgtk2,pprz.xlib,lablgtk2.glade
-XLINKPKG = $(XPKG) -linkpkg -dllpath-pkg pprz.xlib,pprzlink,$(USE_LABELGTK)
-all : play plotter logplotter sd2log plotprofile openlog2tlm sdlogger_download
-endif
-else # no gtk2
-all: sd2log plotprofile openlog2tlm sdlogger_download
-endif
-
-
-play : log_file.cmo play_core.cmo play.cmo $(LIBPPRZCMA) $(LIBPPRZLINKCMA)
-	@echo OL $@
-	$(Q)$(OCAMLC) $(INCLUDES) -o $@ $(LINKPKG) gtkInit.cmo $^
-
-play-nox : play_core.cmo play-nox.cmo $(LIBPPRZCMA) $(LIBPPRZLINKCMA)
-	@echo OL $@
-	$(Q)$(OCAMLC) $(INCLUDES) -o $@ $(LINKPKG) $^
-
-plotter : plotter.cmo $(LIBPPRZCMA) $(LIBPPRZLINKCMA) $(XLIBPPRZCMA)
-	@echo OL $@
-	$(Q)$(OCAMLC) $(INCLUDES) -o $@ $(XLINKPKG) gtkInit.cmo $^
-
-logplotter : log_file.cmo gtk_export.cmo export.cmo logplotter.cmo $(LIBPPRZCMA) $(LIBPPRZLINKCMA) $(XLIBPPRZCMA)
-	@echo OL $@
-	$(Q)$(OCAMLC) $(INCLUDES) -o $@ $(XLINKPKG) gtkInit.cmo $^
-
-sd2log : sd2log.cmo $(LIBPPRZCMA) $(LIBPPRZLINKCMA)
-	@echo OL $@
-	$(Q)$(OCAMLC) $(INCLUDES) -o $@ $(LINKPKG) $^
+# play, plotters, logplotter and sd2log are Python scripts (*.py); only the C tools are built here
+all: plotprofile openlog2tlm sdlogger_download
 
 sdlogger_download: sdlogger_download.c
 	@echo CC $@
 	$(Q)$(CC) $(CFLAGS) -std=gnu99 -o $@ $^
 
-# Target for bytecode executable (if ocamlopt is not available)
-# plot : log_file.cmo gtk_export.cmo export.cmo plot.cmo
-#	@echo OL $@
-#	$(Q)$(OCAMLC) $(INCLUDES) -o $@ unix.cma str.cma xml-light.cma glibivy-ocaml.cma lablgtk.cma lib-pprz.cma lablglade.cma gtkInit.cmo  $^
-
-%.cmo: %.ml
-	@echo OC $<
-	$(Q)$(OCAMLC) $(OCAMLCFLAGS) $(INCLUDES) -c $(PKG) $<
-%.cmi: %.mli
-	@echo OCI $<
-	$(Q)$(OCAMLC) $(OCAMLCFLAGS) $(INCLUDES) -c $(PKG) $<
-%.cmx: %.ml
-	@echo OOC $<
-	$(Q)$(OCAMLOPT) $(OCAMLCFLAGS) $(INCLUDES) -c $(PKG) $<
-
-export.cmo : gtk_export.cmo
-export.cmx : gtk_export.cmx
-
-UNAME = $(shell uname -s)
-ifeq ("$(UNAME)","Darwin")
-	MKTEMP = gmktemp
-else
-	MKTEMP = mktemp
-endif
-
-gtk_export.ml : export.glade
-	@echo GLADE $@
-	$(eval $@_TMP := $(shell $(MKTEMP)))
-	$(Q)grep -v invisible_char $< > $($@_TMP)
-	$(Q)lablgladecc2 -root export -hide-default $($@_TMP) | grep -B 1000000 "  end" > $@
-	$(Q)rm -f $($@_TMP)
-
-
-
-CC = gcc
-CFLAGS=-g -O2 -Wall
 
 openlog2tlm: openlog2tlm.c
 	@echo CC $@
@@ -148,18 +75,6 @@ ffjoystick: ffjoystick.c
 	$(CC) -g -O2 -Wall $(GLIBIVY_CFLAGS) -o $@ $^ $(IVY_C_LIBS) -lm
 
 clean:
-	$(Q)rm -f *.opt *.out *~ core *.o *.bak .depend *.cm* play ahrs2fg logplotter plotter gtk_export.ml openlog2tlm disp3d plotprofile tmclient ffjoystick sd2log sdlogger_download
+	$(Q)rm -f *~ core *.o *.bak ahrs2fg openlog2tlm disp3d plotprofile tmclient ffjoystick sdlogger_download
 
 .PHONY: all clean
-
-#
-# Dependencies
-#
-
-.depend: Makefile
-	@echo DEPEND $@
-	$(Q)$(OCAMLDEP) -I $(LIBPPRZDIR) *.ml* > .depend
-
-ifneq ($(MAKECMDGOALS),clean)
--include .depend
-endif

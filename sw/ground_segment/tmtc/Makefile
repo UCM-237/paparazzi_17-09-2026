@@ -24,87 +24,15 @@
 Q=@
 
 include ../../../conf/Makefile.local
-include ../../Makefile.ocaml
 CONF = ../../../conf
 VAR = ../../../var
 
-INCLUDES=
-PKG = -package glibivy,pprz,$(USE_LABELGTK)
-LINKPKG = $(PKG) -linkpkg -dllpath-pkg pprz,pprzlink,$(USE_LABELGTK)
-XPKG = -package pprz.xlib,$(USE_LABELGTK)
-XLINKPKG = $(XPKG) -linkpkg -dllpath-pkg pprz.xlib,pprzlink,$(USE_LABELGTK)
-
-SERVERCMO = server_globals.cmo aircraft_server.cmo wind.cmo airprox.cmo kml.cmo parse_messages_v1.ml intruder.cmo server.cmo
-SERVERCMX = $(SERVERCMO:.cmo=.cmx)
-
-all: link server ivy_tcp_aircraft ivy_tcp_controller broadcaster ivy2udp ivy2serial app_server ivy2nmea gpsd2ivy gtk_tools
-
-ifeq ($(USE_LABELGTK),lablgtk2)
-gtk_tools: messages
-endif
-
-opt: server.opt
+# the Ivy tools of this directory are Python scripts (link.py, server.py,
+# messages.py, ivy2udp.py, ...); only the C ones are built here
+all: app_server ivy2nmea gpsd2ivy
 
 clean:
-	$(Q)rm -f link server messages *.bak *~ core *.o .depend *.opt *.out *.cm* ivy_tcp_aircraft ivy_tcp_controller broadcaster ivy2udp ivy2serial ivy_serial_bridge app_server gpsd2ivy c_ivy_client_example_1 c_ivy_client_example_2 ivy2nmea
-
-messages : messages.cmo $(LIBPPRZCMA) $(LIBPPRZLINKCMA)
-	@echo OL $@
-	$(Q)$(OCAMLC) $(INCLUDES) -o $@ $(LINKPKG) gtkInit.cmo $<
-
-server : $(SERVERCMO) $(LIBPPRZCMA) $(LIBPPRZLINKCMA)
-	@echo OL $@
-	$(Q)$(OCAMLC) $(INCLUDES) -o $@ $(LINKPKG) $(SERVERCMO)
-
-server.opt :  $(SERVERCMX) $(LIBPPRZCMXA) $(LIBPPRZLINKCMXA)
-	@echo OOL $@
-	$(Q)$(OCAMLOPT) $(INCLUDES) -o $@ -package glibivy,pprz -linkpkg $(SERVERCMX)
-
-link : link.cmo $(LIBPPRZCMA) $(LIBPPRZLINKCMA)
-	@echo OL $@
-	$(Q)$(OCAMLC) $(INCLUDES) -o $@ $(LINKPKG) $<
-
-
-ivy_tcp_aircraft : ivy_tcp_aircraft.cmo $(LIBPPRZCMA) $(LIBPPRZLINKCMA)
-	@echo OL $@
-	$(Q)$(OCAMLC) $(INCLUDES) -o $@ $(LINKPKG) $<
-
-
-ivy_tcp_controller : ivy_tcp_controller.cmo $(LIBPPRZCMA) $(LIBPPRZLINKCMA)
-	@echo OL $@
-	$(Q)$(OCAMLC) $(INCLUDES) -o $@ $(LINKPKG) $<
-
-
-broadcaster : broadcaster.cmo $(LIBPPRZCMA) $(LIBPPRZLINKCMA)
-	@echo OL $@
-	$(Q)$(OCAMLC) $(INCLUDES) -o $@ $(LINKPKG) $<
-
-
-ivy2udp : ivy2udp.cmo $(LIBPPRZCMA) $(LIBPPRZLINKCMA)
-	@echo OL $@
-	$(Q)$(OCAMLC) $(INCLUDES) -o $@ $(LINKPKG) $<
-
-ivy2serial : ivy2serial.cmo $(LIBPPRZCMA) $(LIBPPRZLINKCMA)
-	@echo OL $@
-	$(Q)$(OCAMLC) $(INCLUDES) -o $@ $(LINKPKG) $<
-
-
-150m : 150m.cmo $(LIBPPRZCMA) $(LIBPPRZLINKCMA)
-	@echo OL $@
-	$(Q)$(OCAMLC) $(INCLUDES) -o $@ $(LINKPKG) gtkInit.cmo $<
-
-%.cmo : %.ml
-	@echo OC $<
-	$(Q)$(OCAMLC) $(INCLUDES) $(PKG) -c $<
-
-%.cmx : %.ml
-	@echo OOC $<
-	$(Q)$(OCAMLOPT) $(INCLUDES) $(PKG) -c $<
-
-%.cmi : %.mli
-	@echo OC $<
-	$(Q)$(OCAMLC) $(INCLUDES) $(PKG) $<
-
+	$(Q)rm -f *.bak *~ core *.o app_server gpsd2ivy c_ivy_client_example_1 c_ivy_client_example_2 ivy2nmea
 
 CC = gcc
 
@@ -143,16 +71,4 @@ c_ivy_client_example_1: c_ivy_client_example_1.c Makefile
 c_ivy_client_example_2: c_ivy_client_example_2.c Makefile
 	$(CC) $(GLIBIVY_CFLAGS) -o $@ $< $(GLIBIVY_LDFLAGS)
 
-.PHONY: all opt clean gtk_tools
-
-#
-# Dependencies
-#
-
-.depend: Makefile
-	@echo DEPEND $@
-	$(Q)$(OCAMLDEP) -I $(LIBPPRZDIR) *.ml* > .depend
-
-ifneq ($(MAKECMDGOALS),clean)
--include .depend
-endif
+.PHONY: all clean
