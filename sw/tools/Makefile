@@ -24,44 +24,13 @@ Q=@
 
 CC = gcc
 
-include ../Makefile.ocaml
-
-INCLUDES =
-PKG = -package pprz
-LINKPKG = $(PKG) -linkpkg -dllpath-pkg pprz,pprzlink
-
-all: find_free_msg_id.out mergelogs
-
-
-%.out : %.ml $(LIBPPRZCMA)
-	@echo OL $<
-	$(Q)$(OCAMLC) $(INCLUDES) -o $@ $(LINKPKG) $<
-
-%.cmo : %.ml
-	@echo OC $<
-	$(Q)$(OCAMLC) $(INCLUDES) $(PKG) -c $<
-
-%.cmi : %.mli
-	@echo OC $<
-	$(Q)$(OCAMLC) $(INCLUDES) $(PKG) -c $<
+all: mergelogs
 
 mergelogs: mergelogs.c
 	@echo LD $@
 	$(Q)$(CC) mergelogs.c -o mergelogs
 
 clean:
-	$(Q)rm -f *.cm* *.out *~ .depend mergelogs
+	$(Q)rm -f *~ mergelogs
 
 .PHONY: all clean
-
-#
-# Dependencies
-#
-
-.depend: Makefile
-	@echo DEPEND $@
-	$(Q)$(OCAMLDEP) -I $(LIBPPRZDIR) *.ml *.mli > .depend
-
-ifneq ($(MAKECMDGOALS),clean)
--include .depend
-endif
