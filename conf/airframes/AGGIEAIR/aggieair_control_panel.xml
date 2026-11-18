@@ -11,8 +11,8 @@
     <program name="AggieCap3 Sidekick" command="../AggieAir-Sidekick/payloadMonitor.py"/>
 
     <!-- default programs -->
-    <program name="Server" command="sw/ground_segment/tmtc/server"/>
-    <program name="Data Link" command="sw/ground_segment/tmtc/link">
+    <program name="Server" command="sw/ground_segment/tmtc/server.py"/>
+    <program name="Data Link" command="sw/ground_segment/tmtc/link.py">
       <arg flag="-d" constant="/dev/ttyUSB0"/>
     </program>
     <program name="RustLink" command="sw/ext/rustlink/link">
@@ -31,7 +31,7 @@
     <program name="Flight Plan Editor" command="sw/ground_segment/cockpit/gcs">
       <arg flag="-edit"/>
     </program>
-    <program name="Messages" command="sw/ground_segment/tmtc/messages"/>
+    <program name="Messages" command="sw/ground_segment/tmtc/messages.py"/>
     <program name="Messages (Python)" command="sw/ground_segment/python/messages_app/messagesapp.py"/>
     <program name="Settings" command="sw/ground_segment/tmtc/settings">
       <arg flag="-ac" constant="@AIRCRAFT"/>
@@ -40,22 +40,22 @@
       <arg flag="--ac_id" constant="@AC_ID"/>
     </program>
     <program name="GPSd position display" command="sw/ground_segment/tmtc/gpsd2ivy"/>
-    <program name="Log Plotter" command="sw/logalizer/logplotter"/>
-    <program name="Real-time Plotter" command="sw/logalizer/plotter"/>
+    <program name="Log Plotter" command="sw/logalizer/logplotter.py"/>
+    <program name="Real-time Plotter" command="sw/logalizer/rt_plotter.py"/>
     <program name="Real-time Plotter (Python)" command="sw/ground_segment/python/real_time_plot/realtimeplotapp.py"/>
-    <program name="Log File Player" command="sw/logalizer/play"/>
+    <program name="Log File Player" command="sw/logalizer/play.py"/>
     <program name="Simulator" command="sw/simulator/pprzsim-launch">
       <arg flag="-a" constant="@AIRCRAFT"/>
     </program>
     <program name="Video Synchronizer" command="sw/ground_segment/misc/video_synchronizer"/>
-    <program name="Joystick" command="sw/ground_segment/joystick/input2ivy">
+    <program name="Joystick" command="sw/ground_segment/joystick/input2ivy.py">
       <arg flag="-ac" constant="@AIRCRAFT"/>
       <arg flag="xbox_gamepad.xml"/>
     </program>
     <program name="Sbus Fakerator" command="sw/tools/sbus_fakerator/sbus_fakerator">
       <arg flag="-p" constant="/dev/ttyUSB0"/>
     </program>
-    <program name="Environment Simulator" command="sw/simulator/gaia"/>
+    <program name="Environment Simulator" command="sw/simulator/gaia.py"/>
     <program name="Http Server" command="$python">
       <arg flag="-m" constant="SimpleHTTPServer"/>
       <arg flag="8889"/>

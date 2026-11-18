@@ -24,7 +24,7 @@
         <arg flag="-track_size" constant="200"/>
         <arg flag="-zoom" constant="40."/>
       </program>
-      <program name="Joystick" command="sw/ground_segment/joystick/input2ivy">
+      <program name="Joystick" command="sw/ground_segment/joystick/input2ivy.py">
         <arg flag="-ac" constant="@AIRCRAFT"/>
         <arg flag="sm600.xml"/>
         <arg flag="-d 0"/>
@@ -44,7 +44,7 @@
       <program name="GCS">
         <arg flag="-speech"/>
       </program>
-      <program name="Joystick" command="sw/ground_segment/joystick/input2ivy">
+      <program name="Joystick" command="sw/ground_segment/joystick/input2ivy.py">
         <arg flag="-ac" constant="@AIRCRAFT"/>
         <arg flag="sm600.xml"/>
         <arg flag="-d 0"/>
