@@ -1,2 +1,2 @@
-<program command="sw/logalizer/logplotter" name="Log Plotter" icon="plotter.svg"/>
+<program command="sw/logalizer/logplotter.py" name="Log Plotter" icon="plotter.svg"/>
 
