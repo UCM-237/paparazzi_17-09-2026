@@ -8,7 +8,11 @@ import threading
 from ivy.std_api import IvyInit, IvyStart, IvyStop, IvyBindMsg, IvySendMsg, IvyUnBindMsg  # noqa: F401
 import logging
 
-logging.getLogger("Ivy").setLevel(logging.WARNING)
+if os.environ.get("PPRZ_IVY_DEBUG"):  # ivy-python protocol trace on stderr
+    logging.basicConfig(format="%(asctime)s %(threadName)s %(message)s")
+    logging.getLogger("Ivy").setLevel(logging.DEBUG)
+else:
+    logging.getLogger("Ivy").setLevel(logging.WARNING)
 
 
 def _patch_duplicate_connections():
@@ -52,8 +56,81 @@ def _patch_duplicate_connections():
             self._global_lock.release()
         return count
 
+    # Subscriptions made while a connection is being opened (e.g. the binds a
+    # program makes just after starting Ivy) were sent on that connection
+    # before the handshake, and the peer dropped it as a protocol error
+    # ("Client ... was not properly initialized"): the server could lose the
+    # link at startup. The handshake (name + current subscriptions) is now
+    # sent atomically, and new subscriptions only go to connections whose
+    # handshake has been sent (the others get them in their handshake).
+    orig_handle = I.IvyHandler.handle
+
+    class _SkipHello:
+        """socket proxy dropping the handshake that the original handle()
+        sends (it was already sent), up to its END_REGEXP message"""
+        def __init__(self, sock):
+            self._sock, self._end = sock, I.encode_message(I.END_REGEXP, 0)
+            if not isinstance(self._end, bytes):
+                self._end = self._end.encode()
+            self._skipping = True
+
+        def send(self, data, *a):
+            if self._skipping:
+                d = data if isinstance(data, bytes) else data.encode()
+                if d == self._end:
+                    self._skipping = False
+                return len(d)
+            return self._sock.send(data, *a)
+
+        def __getattr__(self, name):
+            return getattr(self._sock, name)
+
+    def handle(self):
+        srv, sock = self.server, self.request
+        ip, port = self.client_address[0], self.client_address[1]
+        with srv._global_lock:
+            client = srv._get_client(ip, port, sock)
+            sock.send(I.encode_message(I.START_INIT, srv.port, srv.agent_name))
+            for idx, subscr in srv.get_subscriptions():
+                sock.send(I.encode_message(I.ADD_REGEXP, idx, subscr))
+            sock.send(I.encode_message(I.END_REGEXP, 0))
+            client.pprz_hello_sent = True
+        self.request = _SkipHello(sock)
+        return orig_handle(self)
+
+    def bind_msg(self, on_msg_fct, regexp):
+        with self._global_lock:
+            idx = self._add_subscription(regexp, on_msg_fct)
+            for client in list(self._clients.values()):
+                if getattr(client, "pprz_hello_sent", False):
+                    client.send_new_subscription(idx, regexp)
+        return idx
+
+    def unbind_msg(self, num_id):
+        with self._global_lock:
+            regexp = self._remove_subscription(num_id)  # KeyError
+            for client in list(self._clients.values()):
+                if getattr(client, "pprz_hello_sent", False):
+                    client.remove_subscription(num_id)
+        return regexp
+
     I.IvyHandler.process_ivymessage = process_ivymessage
+    I.IvyHandler.handle = handle
     I.IvyServer.send_msg = send_msg
+    # The id an agent announces on the bus is built from its name, and the
+    # receivers split the announcement on spaces: with a space in the name
+    # ("Paparazzi server", which PprzGCS looks for) an agent did not recognise
+    # its own announcement and connected to itself, and all the agents named
+    # "Paparazzi ..." had the same id. The id (not the name) has no spaces now.
+    orig_init = I.IvyServer.__init__
+
+    def server_init(self, *a, **kw):
+        orig_init(self, *a, **kw)
+        self.agent_id = self.agent_id.replace(" ", "_")
+
+    I.IvyServer.__init__ = server_init
+    I.IvyServer.bind_msg = bind_msg
+    I.IvyServer.unbind_msg = unbind_msg
     I.IvyServer._pprz_dedup = True
 
 
@@ -73,9 +150,20 @@ def send(msg):
         IvySendMsg(msg)
 
 
-def init(agent, ready="READY", bus=None):
+_bus = [None]
+
+
+def init(agent, ready="READY", bus=None, start=True):
+    """start=False: subscribe first, then call start(), so that no agent sees
+    this one on the bus before it listens to its requests"""
     IvyInit(agent, ready, 0, lambda *a: None, lambda *a: None)
-    IvyStart(bus or default_ivy_bus())
+    _bus[0] = bus or default_ivy_bus()
+    if start:
+        IvyStart(_bus[0])
+
+
+def start():
+    IvyStart(_bus[0])
 
 
 def message_send(cls, sender, msg_name, values, timestamp=None, link_id=None):
