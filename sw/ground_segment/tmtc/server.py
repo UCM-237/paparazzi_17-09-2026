@@ -724,6 +724,10 @@ class Server:
         self.periodic(1000, self.periodic_handle_intruders)
         self.answerer("AIRCRAFTS", self.send_aircrafts_msg)
         self.answerer("CONFIG", self.send_config)
+        # join the bus only now: a GCS started with the server asks for the
+        # aircraft as soon as it sees it (the configuration of the log can take
+        # seconds to build)
+        ivybus.start()
         while True:
             f, args = self.events.get()
             try:
@@ -756,7 +760,7 @@ def main():
     o, unknown = ap.parse_known_args()
     for x in unknown:
         sys.stderr.write("%s: Warning: Don't do anything with '%s' argument\n" % (sys.argv[0], x))
-    ivybus.init("Paparazzi server", "READY", o.b)
+    ivybus.init("Paparazzi server", "READY", o.b, start=False)
     try:
         Server(o).run()
     except KeyboardInterrupt:
