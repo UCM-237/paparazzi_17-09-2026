@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 import sys
 import signal
 import re
@@ -125,7 +125,7 @@ class Plotter(QWidget, Ui_RT_Plotter):
         self.action_quit.triggered.connect(self.quit_plotter)
         self.constant_input.returnPressed.connect(self.draw_constant)
         self.ivy = ivy
-        self.pattern = re.compile("^([0-9]+):(\\w+):(\\w+):(\\w+):([0-9]+.[0-9]*).*$")
+        self.pattern = re.compile("^([0-9]+|\\*):(\\w+):(\\w+):(\\w+)(?::([0-9]+.[0-9]*))?.*$")
         self.data = CurvesCollection()
         self.constants = {}             # type: Dict[float, Constant]
         self.dt_slider.valueChanged.connect(self.set_dt)
@@ -187,10 +187,15 @@ class Plotter(QWidget, Ui_RT_Plotter):
 
     def dropEvent(self, event):
         event.accept()
-        match = self.pattern.fullmatch(event.mimeData().text())
+        self.add_curve_text(event.mimeData().text())
+
+    def add_curve_text(self, text):
+        """Add a curve from 'sender:class:MSG:field[:scale]' (sender '*' = any)."""
+        match = self.pattern.fullmatch(text)
         if match is None:
             return
         ac_id, class_name, msg_name, field, sc = match.group(1, 2, 3, 4, 5)
+        sc = sc if sc else "1."
         scale = float(sc) * self.scale_spin.value()
         offset = self.offset_spin.value()
         key = '{}:{}+{}'.format(field, scale, offset)
@@ -201,7 +206,8 @@ class Plotter(QWidget, Ui_RT_Plotter):
         menu_item = QAction("remove {}".format(match.group(0)))
         plot = self.plot.plot([], [], pen=(self.idx_color, self.nb_color),
                               name='{}:{}:{}:{}'.format(ac_id, class_name, msg_name, key))
-        bind = ivy.subscribe(self.msg_callback, '^({} {} .*)'.format(ac_id, msg_name))
+        sender_rx = "[^ ]*" if ac_id == "*" else ac_id
+        bind = self.ivy.subscribe(self.msg_callback, '^({} {} .*)'.format(sender_rx, msg_name))
 
         c = Curve(field=field,
                   data=np.zeros(self.max_size),
@@ -221,7 +227,7 @@ class Plotter(QWidget, Ui_RT_Plotter):
         menu_item.triggered.connect(lambda: self.remove_curve(ac_id, msg_name, key))
 
     def msg_callback(self, ac_id, msg):
-        for c in self.data.curves(str(ac_id), msg.name):
+        for c in self.data.curves(str(ac_id), msg.name) + self.data.curves("*", msg.name):
             c.last_data = float(msg[c.field])
 
     def remove_curve(self, ac_id, msg_name, key):
@@ -256,9 +262,9 @@ class Plotter(QWidget, Ui_RT_Plotter):
         else:
             self.plot.setBackground('w')
 
-    def draw_constant(self):
+    def draw_constant(self, text=None):
         try:
-            value = float(self.constant_input.text())
+            value = float(self.constant_input.text() if not isinstance(text, str) else text)
             if value not in self.constants:
                 action = QAction('remove {}'.format(value))
                 self.menu.addAction(action)
@@ -298,37 +304,99 @@ class MainWindow(QMainWindow):
         self.new_window()
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Real-time plotter")
+def parse_geometry(w, g):
+    """X11 geometry WxH[+-]X[+-]Y (negative offsets from the right/bottom)."""
+    m = re.match(r"^(\d+)x(\d+)(?:([+-]\d+)([+-]\d+))?$", g or "")
+    if not m:
+        return
+    width, height = int(m.group(1)), int(m.group(2))
+    w.resize(width, height)
+    if m.group(3) is not None:
+        scr = QtWidgets.QApplication.primaryScreen().availableGeometry()
+        x, y = int(m.group(3)), int(m.group(4))
+        x = x if m.group(3)[0] == "+" else scr.width() - width + x
+        y = y if m.group(4)[0] == "+" else scr.height() - height + y
+        w.move(x, y)
 
+
+if __name__ == '__main__':
+    # same options as the former OCaml plotter
+    parser = argparse.ArgumentParser(description="Real-time plotter")
+    parser.add_argument("-b", dest="bus", default=None, help="<ivy bus>")
+    parser.add_argument("-c", dest="curves", action="append", default=[],
+                        help="<curve> e.g. '*:telemetry:BAT:voltage' or a constant e.g. '1.5' (into the last window)")
+    parser.add_argument("-t", dest="title", action="append", default=[], help="<title> of the last opened window")
+    parser.add_argument("-g", dest="geometry", action="append", default=[], help="<geometry> of the last window")
+    parser.add_argument("-n", dest="new", action="append_const", const=True, default=[],
+                        help="open another window for the next curves")
+    parser.add_argument("-m", dest="size", type=int, default=None, help="memory size (ignored)")
+    parser.add_argument("-u", dest="update", type=float, default=None, help="update time in s")
+    # options are applied in command-line order, like the OCaml version
+    order = []
+    argv = sys.argv[1:]
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("-c", "-t", "-g") and i + 1 < len(argv):
+            order.append((a, argv[i + 1]))
+            i += 2
+        elif a == "-n":
+            order.append((a, None))
+            i += 1
+        elif a in ("-b", "-m", "-u") and i + 1 < len(argv):
+            order.append((a, argv[i + 1]))
+            i += 2
+        else:
+            i += 1
+    opts = parser.parse_args()
+    ivy = None
     try:
-        app = QtWidgets.QApplication(sys.argv)
-        ivy = IvyMessagesInterface("natnet2ivy")
+        app = QtWidgets.QApplication(sys.argv[:1])
+        if opts.bus:
+            ivy = IvyMessagesInterface("rt_plotter", ivy_bus=opts.bus)
+        else:
+            ivy = IvyMessagesInterface("rt_plotter")
         windows = []
 
 
         def make_new_window():
             w = MainWindow(ivy, make_new_window)
             windows.append(w)
+            if opts.update is not None:
+                w.plotter.dt_slider.setValue(int(opts.update * 100 + 0.5))
             w.show()
-
+            return w
 
         def closing():
             ivy.shutdown()
             for w in windows:
                 w.close_plotter()
 
-
         def sigint_handler(*args):
             """Handler for the SIGINT signal."""
             app.quit()
 
-
         app.aboutToQuit.connect(closing)
         signal.signal(signal.SIGINT, sigint_handler)
-        make_new_window()
-        sys.exit(app.exec_())
+        current = make_new_window()
+        for k, v in order:
+            if k == "-n":
+                current = make_new_window()
+            elif k == "-t":
+                current.setWindowTitle(v)
+            elif k == "-g":
+                parse_geometry(current, v)
+            elif k == "-c":
+                try:
+                    float(v)
+                    current.plotter.draw_constant(v)
+                except ValueError:
+                    current.plotter.add_curve_text(v)
+        code = app.exec_()
+        import os as _os
+        _os._exit(code)
 
     except Exception as e:
         print('exit on exception:', e)
-        ivy.shutdown()
+        if ivy is not None:
+            ivy.shutdown()

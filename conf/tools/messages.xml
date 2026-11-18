@@ -1,2 +1,2 @@
-<program command="sw/ground_segment/tmtc/messages" name="Messages" />
+<program command="sw/ground_segment/tmtc/messages.py" name="Messages" />
 
