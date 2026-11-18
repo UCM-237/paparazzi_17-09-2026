@@ -21,7 +21,11 @@ import os
 import shlex
 import subprocess
 import sys
+import re
 import xml.etree.ElementTree as ET
+
+# "Version" lines come from `git describe` and change with every commit
+_VERSION_RE = re.compile(rb"^(/\* Version .* \*/|# Version .*)$", re.M)
 from pathlib import Path
 
 HOME = Path(__file__).resolve().parents[2]
@@ -89,6 +93,9 @@ def run_group(gen, outroot, group):
 
 def record(args):
     todo = list(jobs())
+    if args.only:
+        rx = re.compile(args.only)
+        todo = [j for j in todo if rx.search(f"{j[0].relative_to(CONF).with_suffix('')}/{j[1]}/{j[2]}".replace("/", "__"))]
     print(f"{len(todo)} (conf, aircraft, target) combinations")
     groups = {}
     for j in todo:
@@ -109,7 +116,7 @@ def files_under(d):
 
 def compare(args):
     a, b = Path(args.a), Path(args.b)
-    keys = sorted(set(os.listdir(a)) | set(os.listdir(b)))
+    keys = sorted(set(os.listdir(a)) & set(os.listdir(b))) if args.common else sorted(set(os.listdir(a)) | set(os.listdir(b)))
     bad = 0
     for k in keys:
         fa, fb = files_under(a / k), files_under(b / k)
@@ -121,6 +128,8 @@ def compare(args):
                 problems.append(f"  only in {'A' if rel in fa else 'B'}: {rel}")
                 continue
             ta, tb = fa[rel].read_bytes(), fb[rel].read_bytes()
+            if not args.with_version:
+                ta, tb = _VERSION_RE.sub(b"", ta), _VERSION_RE.sub(b"", tb)
             if ta != tb:
                 problems.append(f"  differs: {rel}")
                 if args.diff:
@@ -143,11 +152,14 @@ def main():
     r.add_argument("--gen", required=True, help="generator command line")
     r.add_argument("--out", required=True)
     r.add_argument("-j", "--jobs", type=int, default=os.cpu_count())
+    r.add_argument("--only", help="regex on the combination key (conf__aircraft__target)")
     c = sub.add_parser("compare")
     c.add_argument("a")
     c.add_argument("b")
     c.add_argument("--diff", type=int, default=0, metavar="N", help="show first N diff lines per file")
     c.add_argument("--stderr", action="store_true", help="also compare stderr")
+    c.add_argument("--common", action="store_true", help="only compare combinations present in both")
+    c.add_argument("--with-version", action="store_true", help="do not ignore 'Version' lines")
     args = ap.parse_args()
     if args.cmd == "record":
         record(args)

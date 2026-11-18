@@ -1,0 +1,149 @@
+"""Port of sw/tools/generators/gen_makefile.ml: generates Makefile.ac"""
+
+import re
+
+from . import env
+from . import module as M
+from . import aircraft as AC
+from .gen_common import singletonize
+from .xml2h import open_out
+
+
+def _s(x):
+    return "" if x is None else x
+
+
+def configure2mk(f, c, default_configure=False):
+    name = c.cname.upper()
+    value = _s(c.cvalue)
+    default = _s(c.default)
+    case = _s(c.case)
+    if default_configure:
+        if len(default) > 0 and len(value) == 0:
+            f.write("%s ?= %s\n" % (name, default))
+    else:
+        if len(value) > 0:
+            f.write("%s = %s\n" % (name, value))
+        if len(value) == 0 and len(default) == 0 and len(case) == 0:
+            f.write("%s =\n" % name)
+    # Str ".*lower.*" anchored at 0, '.' does not match newline
+    if re.match(r"[^\n]*lower", case):
+        f.write("%s_LOWER = $(shell echo $(%s) | tr A-Z a-z)\n" % (name, name))
+    if re.match(r"[^\n]*upper", case):
+        f.write("%s_UPPER = $(shell echo $(%s) | tr a-z A-Z)\n" % (name, name))
+
+
+def include2mk(f, inc, target="$(TARGET)", vpath=None):
+    path = vpath + "/" if vpath is not None else ""
+    flag = "%s.CFLAGS += -I%s%s" % (target, path, inc.element)
+    if inc.condition is None:
+        f.write(flag + "\n")
+    else:
+        f.write("%s\n%s\nendif\n" % (inc.condition, flag))
+
+
+def flag2mk(f, x, target="$(TARGET)"):
+    flag = "%s.%s += -%s" % (target, x.flag, x.value)
+    if x.fcond is None:
+        f.write(flag + "\n")
+    else:
+        f.write("%s\n%s\nendif\n" % (x.fcond, flag))
+
+
+def define2mk(f, define, target="$(TARGET)"):
+    value = define.dvalue
+    if define.dtype == "string" and value is not None:
+        ft = '=\\"' + value + '\\"'
+    elif value is not None:
+        ft = "=" + value
+    else:
+        ft = ""
+    flag = "%s.CFLAGS += -D%s%s" % (target, define.dname, ft)
+    if define.cond is None:
+        f.write(flag + "\n")
+    else:
+        f.write("%s\n%s\nendif\n" % (define.cond, flag))
+
+
+def file2mk(f, dir_name, target, file, arch=False):
+    name = file.filename
+    if file.directory == ".":
+        d = ""
+    elif file.directory is not None:
+        d = file.directory + "/"
+    else:
+        d = "$(" + dir_name + ")/"
+    if file.filecond is None:
+        cond, cond_end = "", ""
+    else:
+        cond, cond_end = "\n" + file.filecond + "\n", "\nendif"
+    if arch:
+        f.write("%s%s.srcs += arch/$(ARCH)/%s%s%s\n" % (cond, target, d, name, cond_end))
+    else:
+        f.write("%s%s.srcs += %s%s%s\n" % (cond, target, d, name, cond_end))
+
+
+def module2mk(f, target, firmware, m):
+    d = m.dir if m.dir is not None else m.name
+    dir_name = d.upper() + "_DIR"
+    for mk in m.makefiles:
+        if M.check_mk(target, firmware, mk):
+            if mk.condition is not None:
+                f.write(mk.condition + "\n")
+            for x in mk.defines:
+                define2mk(f, x, target=target)
+            for x in mk.inclusions:
+                include2mk(f, x, target=target)
+            for x in reversed(mk.flags):
+                flag2mk(f, x, target=target)
+            for x in mk.files:
+                file2mk(f, dir_name, target, x)
+            for x in mk.files_arch:
+                file2mk(f, dir_name, target, x, arch=True)
+            for r in mk.raws:
+                f.write(r + "\n")
+            if mk.condition is not None:
+                f.write("endif\n")
+
+
+def dump_target_conf(out, target, conf):
+    out.write("\n####################################################\n")
+    out.write("# makefile target '%s' for firmware '%s'\n" % (target, conf.firmware_name))
+    out.write("####################################################\n\n")
+    out.write("ifeq ($(TARGET), %s)\n\n" % target)
+    dirs = []
+    for _, m in conf.modules:
+        dirs.insert(0, m.name if m.dir is None else m.dir)
+    for d in singletonize(dirs):
+        out.write("%s_DIR = modules/%s\n" % (d.upper(), d))
+    for p in env.modules_ext_paths:
+        out.write("VPATH += %s\n" % p)
+        out.write("$(TARGET).CFLAGS += -I%s/modules\n" % p)
+    out.write("\n")
+    if conf.autopilot:
+        out.write("USE_GENERATED_AUTOPILOT = TRUE\n")
+    for c in conf.configures:
+        configure2mk(out, c)
+    out.write("\ninclude $(PAPARAZZI_SRC)/conf/boards/%s.makefile\n" % conf.board_type)
+    out.write("include $(PAPARAZZI_SRC)/conf/firmwares/%s.makefile\n\n" % conf.firmware_name)
+    for c in conf.configures_default:
+        configure2mk(out, c, default_configure=True)
+    out.write("\n")
+    for d in conf.defines:
+        define2mk(out, d)
+    out.write("\n")
+    for l, m in conf.modules:
+        if l in (AC.USER_LOAD, AC.DEPEND, AC.SUGGESTED):
+            module2mk(out, target, conf.firmware_name, m)
+    out.write("\nendif # end of target '%s'\n\n" % target)
+
+
+def generate_makefile(ac_id, confs, makefile_out):
+    with open_out(makefile_out) as out:
+        out.write("# This file has been generated by gen_aircraft\n")
+        out.write("# Version %s\n" % env.get_paparazzi_version())
+        out.write("# Please DO NOT EDIT\n")
+        out.write("AC_ID=%s\n\n" % ac_id)
+        out.write("$(TARGET).CFLAGS += -Imodules -Iarch/$(ARCH)/modules\n")
+        for target, c in confs.items():
+            dump_target_conf(out, target, c)
