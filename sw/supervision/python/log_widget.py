@@ -67,7 +67,7 @@ class LogWidget(QWidget, Ui_LogWidget):
     def start_processing(self):
         if (self.process.state() == QProcess.ProcessState.NotRunning and
                 self.input_edit.text() != ""):
-            program = os.path.expandvars("$PAPARAZZI_SRC/sw/logalizer/sd2log")
+            program = os.path.expandvars("$PAPARAZZI_SRC/sw/logalizer/sd2log.py")
             input = self.input_edit.text()
             output = os.path.expandvars(self.output_edit.text())
             if not os.path.exists(TMP_DIR):
