@@ -76,6 +76,33 @@ class PprzTransport(_Transport):
         return bytes(m)
 
 
+class PprzlogTransport(_Transport):
+    """Pprzlog_transport (SD-card logs): STX len source timestamp(int32) pprz_data ck"""
+    STX = 0x99
+
+    def index_start(self, buf):
+        return buf.index(self.STX)
+
+    def length(self, buf, start):
+        if len(buf) - start > 1:
+            return buf[start + 1] + 8
+        raise NotEnough()
+
+    @staticmethod
+    def compute_checksum(msg):
+        ck = 0
+        for i in range(1, len(msg) - 1):
+            ck = (ck + msg[i]) & 0xFF
+        return ck
+
+    def checksum(self, msg):
+        return self.compute_checksum(msg) == msg[-1]
+
+    def payload(self, msg):
+        assert msg[1] + 8 == len(msg)
+        return msg[2:len(msg) - 1]
+
+
 class XbeeTransport(_Transport):
     START = 0x7E
 
