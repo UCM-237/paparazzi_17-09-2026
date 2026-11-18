@@ -119,8 +119,11 @@ static void send_gvf(struct transport_tx *trans, struct link_device *dev)
 
 
 static void send_static_control(struct transport_tx *trans, struct link_device *dev){
+    // STATIC_CONTROL.active is a uint8 while stay_still is an int:
+    // send a 1-byte copy (GCC >= 14 rejects the incompatible pointer)
+    uint8_t active = (uint8_t)gvf_c_stopwp.stay_still;
     pprz_msg_send_STATIC_CONTROL(trans,dev,AC_ID,
-    &gvf_c_stopwp.stay_still, &dist_WP,&gvf_c_stopwp.next_wp,&gvf_c_stopwp.pxd,&gvf_c_stopwp.pyd,
+    &active, &dist_WP,&gvf_c_stopwp.next_wp,&gvf_c_stopwp.pxd,&gvf_c_stopwp.pyd,
     &bz_stop_wp.bz0x, &bz_stop_wp.bz0y, &bz_stop_wp.bz4x,&bz_stop_wp.bz4y,
     &bz_stop_wp.bz7x, &bz_stop_wp.bz7y,&bz_stop_wp.bz11x,&bz_stop_wp.bz11y);
 
