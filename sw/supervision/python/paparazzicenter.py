@@ -314,6 +314,10 @@ if __name__ == "__main__":
     if os.environ.get("XDG_SESSION_TYPE") == "wayland" and "QT_QPA_PLATFORM" not in os.environ:
         os.environ["QT_QPA_PLATFORM"] = "xcb"
     app = QApplication(sys.argv + ["--disable-seccomp-filter-sandbox"])
+    # the id that desktop launchers use to show the window with its icon
+    # (WM_CLASS on X11, app id on Wayland): see sw/tools/install_desktop_launcher.sh
+    app.setApplicationName("paparazzi-jack-the-lad")
+    app.setDesktopFileName("paparazzi-jack-the-lad")
 
     timer = QtCore.QTimer()
     timer.start(100)
