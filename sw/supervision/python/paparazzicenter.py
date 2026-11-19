@@ -35,7 +35,12 @@ class PprzCenter(QMainWindow, Ui_SupervisionWindow):
         self.setupUi(self)
         self.conf: Conf = None
         self.currentAc: Aircraft = None
-        icon = QtGui.QIcon(os.path.join(utils.PAPARAZZI_HOME, "data", "pictures", "penguin_logo.svg"))
+        # Jack the lad, the icon of the OCaml-free Paparazzi (PNG sizes: they
+        # load even without Qt's SVG image plugin)
+        icon = QtGui.QIcon()
+        jack = os.path.join(utils.PAPARAZZI_HOME, "data", "pictures", "jack_the_lad")
+        for size in (16, 32, 48, 64, 128, 256, 512):
+            icon.addFile(os.path.join(jack, "jack_the_lad_%d.png" % size), QtCore.QSize(size, size))
         self.setWindowIcon(icon)
 
         self.settings_action.triggered.connect(self.edit_settings)
