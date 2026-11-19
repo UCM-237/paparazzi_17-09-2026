@@ -1,0 +1,36 @@
+<!DOCTYPE module SYSTEM "module.dtd">
+
+<module name="cmsis_dsp" dir="math">
+  <doc>
+    <description>
+      ARM CMSIS-DSP library (sw/ext/cmsis-dsp, Apache-2.0): optimised matrix,
+      filter and controller functions for Cortex-M processors.
+      Only the functions listed below are compiled; add the files you need.
+      Include "arm_math.h" in your code. Autopilot target only (not NPS).
+      Note: Apache-2.0 code combined with Paparazzi (GPLv2 or later) is
+      distributed under GPLv3 terms.
+    </description>
+  </doc>
+  <makefile target="ap">
+    <include name="$(PAPARAZZI_SRC)/sw/ext/cmsis-dsp/Include"/>
+    <include name="$(PAPARAZZI_SRC)/sw/ext/cmsis-dsp/PrivateInclude"/>
+    <!-- CMSIS-Core headers (cmsis_compiler.h...), shipped with ChibiOS -->
+    <include name="$(PAPARAZZI_SRC)/sw/ext/chibios/os/common/ext/ARM/CMSIS/Core/Include"/>
+    <define name="ARM_MATH_LOOPUNROLL"/>
+    <define name="DISABLEFLOAT16"/>
+    <!-- matrix functions -->
+    <file name="arm_mat_init_f32.c" dir="$(PAPARAZZI_SRC)/sw/ext/cmsis-dsp/Source/MatrixFunctions"/>
+    <file name="arm_mat_mult_f32.c" dir="$(PAPARAZZI_SRC)/sw/ext/cmsis-dsp/Source/MatrixFunctions"/>
+    <file name="arm_mat_add_f32.c" dir="$(PAPARAZZI_SRC)/sw/ext/cmsis-dsp/Source/MatrixFunctions"/>
+    <file name="arm_mat_sub_f32.c" dir="$(PAPARAZZI_SRC)/sw/ext/cmsis-dsp/Source/MatrixFunctions"/>
+    <file name="arm_mat_trans_f32.c" dir="$(PAPARAZZI_SRC)/sw/ext/cmsis-dsp/Source/MatrixFunctions"/>
+    <file name="arm_mat_scale_f32.c" dir="$(PAPARAZZI_SRC)/sw/ext/cmsis-dsp/Source/MatrixFunctions"/>
+    <file name="arm_mat_inverse_f32.c" dir="$(PAPARAZZI_SRC)/sw/ext/cmsis-dsp/Source/MatrixFunctions"/>
+    <!-- filters -->
+    <file name="arm_biquad_cascade_df1_init_f32.c" dir="$(PAPARAZZI_SRC)/sw/ext/cmsis-dsp/Source/FilteringFunctions"/>
+    <file name="arm_biquad_cascade_df1_f32.c" dir="$(PAPARAZZI_SRC)/sw/ext/cmsis-dsp/Source/FilteringFunctions"/>
+    <!-- controllers (arm_pid_f32 itself is inline in the header) -->
+    <file name="arm_pid_init_f32.c" dir="$(PAPARAZZI_SRC)/sw/ext/cmsis-dsp/Source/ControllerFunctions"/>
+    <file name="arm_pid_reset_f32.c" dir="$(PAPARAZZI_SRC)/sw/ext/cmsis-dsp/Source/ControllerFunctions"/>
+  </makefile>
+</module>
