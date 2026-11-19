@@ -26,7 +26,8 @@ args = parser.parse_args()
 class SendNumWp(object):
     def __init__(self, verbose=False):
         self.verbose = verbose
-        self._interface = IvyMessagesInterface("NumWaypointMoved")
+        self._interface = IvyMessagesInterface("NumWaypointMoved", ivy_bus=args.ivy_bus) if args.ivy_bus \
+            else IvyMessagesInterface("NumWaypointMoved")
 
     def shutdown(self):
         print("Shutting down ivy interface...")
@@ -50,8 +51,14 @@ if __name__ == '__main__':
     try:
         
         snw = SendNumWp()
-        # sleep shortly in order to make sure Ivy is up, then message sent before shutting down again
-        sleep(0.1)      
+        # wait until Ivy is connected to the link (at most 3 s), then send
+        # (a fixed 0.1 s was too short with the Python link)
+        from ivy.std_api import IvyGetApplicationList
+        for _ in range(30):
+            if "link" in IvyGetApplicationList():
+                break
+            sleep(0.1)
+        sleep(0.5)  # the link's subscriptions arrive just after the connection
         snw.num_moved_waypoints(num=num)
         sleep(0.1)
     except KeyboardInterrupt:
