@@ -302,6 +302,12 @@ class PprzCenter(QMainWindow, Ui_SupervisionWindow):
 if __name__ == "__main__": 
     # argument needed for the webviewer to work (documentation)
     # https://stackoverflow.com/questions/75922410/pyqt5-qwebengineview-blank-window
+    # On a Wayland session Qt 5 uses X11 (XWayland) anyway, printing
+    # "Ignoring XDG_SESSION_TYPE=wayland on Gnome..." (Qt 5 windows have no
+    # title bars on GNOME Wayland). Choose X11 explicitly: no warning, and the
+    # programs started from the Center (PprzGCS, plotters...) inherit it.
+    if os.environ.get("XDG_SESSION_TYPE") == "wayland" and "QT_QPA_PLATFORM" not in os.environ:
+        os.environ["QT_QPA_PLATFORM"] = "xcb"
     app = QApplication(sys.argv + ["--disable-seccomp-filter-sandbox"])
 
     timer = QtCore.QTimer()

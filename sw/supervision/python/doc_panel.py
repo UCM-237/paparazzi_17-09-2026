@@ -25,6 +25,21 @@ LOCAL_DOC_ROOT = os.path.join(utils.PAPARAZZI_HOME, "doc/sphinx/build/html/")
 INTERNET_DOC_ROOT = "https://paparazzi-uav.readthedocs.io/en/latest/"
 
 
+def _quiet_page(view):
+    """Web page that does not print the console messages of the pages' scripts:
+    the online doc uses browser features newer than Qt WebEngine 5.15
+    (e.g. "js: Uncaught ReferenceError: CSSLayerBlockRule is not defined").
+    Set PPRZ_DEBUG_WEB=1 to see them."""
+    from PyQt5.QtWebEngineWidgets import QWebEnginePage
+
+    class QuietPage(QWebEnginePage):
+        def javaScriptConsoleMessage(self, level, message, line, source):
+            if os.environ.get("PPRZ_DEBUG_WEB"):
+                print("js: %s (%s:%d)" % (message, source, line))
+
+    return QuietPage(view)
+
+
 class DocPanel(QWidget, Ui_DocPanel):
 
     def __init__(self, parent=None):
@@ -35,6 +50,7 @@ class DocPanel(QWidget, Ui_DocPanel):
             return
         except AttributeError:
             ...
+        self.webView.setPage(_quiet_page(self.webView))
         self.current_ac = None
         self.doc_source_combo.currentTextChanged.connect(self.change_doc_source)
         self.open_browser_button.clicked.connect(lambda: QDesktopServices.openUrl(self.webView.url()))
