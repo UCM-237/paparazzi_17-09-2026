@@ -17,6 +17,7 @@ checks what a GCS would rely on:
 """
 
 import argparse
+import xml.etree.ElementTree as ET
 import os
 import re
 import subprocess
@@ -121,8 +122,11 @@ def main():
         if fp:
             f = fp[-1].split()
             lat, lon = float(f[6]), float(f[7])
-            check("FLIGHT_PARAM position near the flight plan origin", abs(lat - 40.45) < 0.1 and abs(lon + 3.73) < 0.1,
-                  "lat=%f long=%f" % (lat, lon))
+            fpx = ET.parse(os.path.join(HOME, "var", "aircrafts", a.a, "flight_plan.xml")).getroot()
+            fpx = fpx if fpx.tag == "flight_plan" else fpx.find("flight_plan")  # dump format
+            lat0, lon0 = float(fpx.get("lat0")), float(fpx.get("lon0"))
+            check("FLIGHT_PARAM position near the flight plan origin", abs(lat - lat0) < 0.1 and abs(lon - lon0) < 0.1,
+                  "lat=%f long=%f (origin %f %f)" % (lat, lon, lat0, lon0))
         # requests
         t0 = time.time()
         IvySendMsg("simtest 42_1 AIRCRAFTS_REQ")
@@ -145,7 +149,15 @@ def main():
         # setting round trip (index 0)
         t0 = time.time()
         vals = bus.find(r"^ground DL_VALUES %s " % ac_id)
-        check("server publishes DL_VALUES (settings values)", vals, vals[-1][:100] if vals else "")
+        how = "periodic DL_VALUE"
+        if not vals:
+            # DL_VALUE is not in the current telemetry mode: ask for setting 0,
+            # as a GCS does (server -> GET_SETTING -> aircraft -> DL_VALUE)
+            how = "after GET_DL_SETTING"
+            IvySendMsg("gcs GET_DL_SETTING %s 0" % ac_id)
+            vals = bus.wait(r"^ground DL_VALUES %s " % ac_id, 10, t0)
+        check("server publishes DL_VALUES (settings values)", vals,
+              ("%s: %s" % (how, vals[-1][:80])) if vals else how)
         tele = bus.find(r"^%s (ALIVE|ROVER_STATUS|GPS|NAVIGATION) " % ac_id)
         check("link publishes telemetry on the bus", tele, "%d msgs" % len(tele))
         lr = bus.find(r"^link LINK_REPORT %s " % ac_id)
