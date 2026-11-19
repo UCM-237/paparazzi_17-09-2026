@@ -1,0 +1,32 @@
+<!DOCTYPE module SYSTEM "module.dtd">
+
+<module name="cmsis_bench" dir="benchmark">
+  <doc>
+    <description>
+      Benchmark of ARM CMSIS-DSP against the equivalent Paparazzi code, run on
+      the autopilot itself (CPU cycles counted with the Cortex-M DWT counter):
+      matrix product and inverse (3x3, 6x6, 12x12), 2nd order low-pass filter
+      over 64 samples, PID over 64 steps.
+      The benchmark runs once, a few seconds after boot (it blocks the main loop
+      for a fraction of a second: do not use it on a vehicle that is moving),
+      then the results are sent every 2 s in a PAYLOAD_FLOAT message:
+        [0] CPU clock (MHz), then 3 values per test:
+        Paparazzi cycles, CMSIS cycles, max abs difference of the results
+        (-1 when the two algorithms are not the same).
+      Tests: mat_mult 3, 6, 12 | mat_inv 3, 6, 12 | lowpass x64 |
+             PID x64 (Paparazzi update_pid_f) | PID x64 (same formula as CMSIS, plain C)
+      Read them with sw/tools/cmsis_bench_report.py or in the Messages tool.
+    </description>
+  </doc>
+  <dep>
+    <depends>cmsis_dsp</depends>
+  </dep>
+  <header>
+    <file name="cmsis_bench.h"/>
+  </header>
+  <init fun="cmsis_bench_init()"/>
+  <periodic fun="cmsis_bench_periodic()" freq="0.5" autorun="TRUE"/>
+  <makefile target="ap">
+    <file name="cmsis_bench.c"/>
+  </makefile>
+</module>

@@ -62,3 +62,6 @@
 [submodule "sw/ext/dronecan/libcanard"]
 	path = sw/ext/dronecan/libcanard
 	url = https://github.com/dronecan/libcanard.git
+[submodule "sw/ext/cmsis-dsp"]
+	path = sw/ext/cmsis-dsp
+	url = https://github.com/ARM-software/CMSIS-DSP.git
