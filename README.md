@@ -1,5 +1,7 @@
 # MAIN README
 
+> **UCM (Jack_the_lad branches):** this Paparazzi has no OCaml. Installation, simulation, real vehicles and the changes from `rover`/`boat` are in [doc/JACK_THE_LAD.md](doc/JACK_THE_LAD.md).
+
 Paparazzi UAS
 =============
 [![Build Status](https://paparazziuav.semaphoreci.com/badges/paparazzi/branches/master.svg?style=shields&key=d3a59143-a357-434e-89b8-057f15ed8dd2)](https://paparazziuav.semaphoreci.com/projects/paparazzi) [![Gitter chat](https://badges.gitter.im/paparazzi/discuss.svg)](https://gitter.im/paparazzi/discuss)
