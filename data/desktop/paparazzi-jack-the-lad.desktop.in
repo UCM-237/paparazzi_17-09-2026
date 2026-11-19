@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Paparazzi Center (Jack the lad)
+GenericName=Autopilot ground station
+Comment=Configure, build, upload and simulate Paparazzi aircraft and rovers
+Exec=@PAPARAZZI_HOME@/paparazzi
+Path=@PAPARAZZI_HOME@
+Icon=paparazzi-jack-the-lad
+Terminal=false
+Categories=Development;Engineering;
+Keywords=paparazzi;drone;rover;uav;autopilot;
+StartupNotify=true
+StartupWMClass=paparazzi-jack-the-lad
